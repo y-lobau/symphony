@@ -2,14 +2,13 @@
 set -euo pipefail
 
 root=/Volumes/ext/git/plyn-symphony
-runtime="$root/bin/symphony-v0.0.3-macos_arm64"
-export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
-export GITHUB_TOKEN="$(/usr/bin/awk -F ": " '/^    oauth_token:/ {print $2; exit}' /Users/yanlobau/.config/gh/hosts.yml)"
+export PATH=/opt/homebrew/opt/erlang@28/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+unset GITHUB_TOKEN GH_TOKEN
+export GH_CONFIG_DIR=/Users/yanlobau/Library/Application\ Support/plyn-symphony/gh-config
 
-[[ -n "$GITHUB_TOKEN" ]] || { print -u2 "GitHub token unavailable"; exit 1; }
-
-mkdir -p /Users/yanlobau/Library/Logs/plyn-symphony
-exec "$runtime" \
+mkdir -p /Users/yanlobau/Library/Logs/plyn-symphony "$GH_CONFIG_DIR"
+chmod 700 "$GH_CONFIG_DIR"
+exec /opt/homebrew/opt/erlang@28/bin/escript "$root/elixir/bin/symphony" \
   --i-understand-that-this-will-be-running-without-the-usual-guardrails \
   --logs-root "$root/var/logs" \
   --port 4097 \

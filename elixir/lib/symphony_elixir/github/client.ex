@@ -286,15 +286,37 @@ defmodule SymphonyElixir.GitHub.Client do
     provider = provider_settings(tracker_settings)
     api_url = provider["api_url"] || @default_api_url
     repo = resolve_setting(provider["repo"], System.get_env("GITHUB_REPO"))
-    token = resolve_setting(provider["token"], System.get_env("GITHUB_TOKEN"))
 
-    cond do
-      not valid_api_url?(api_url) -> {:error, :invalid_github_api_url}
-      not present_string?(repo) -> {:error, :missing_github_repo}
-      not valid_repo?(repo) -> {:error, :invalid_github_repo}
-      not present_string?(token) -> {:error, :missing_github_token}
-      true -> {:ok, %{api_url: String.trim_trailing(api_url, "/"), repo: repo, token: token}}
+    with {:ok, token} <- github_token(provider) do
+      cond do
+        not valid_api_url?(api_url) -> {:error, :invalid_github_api_url}
+        not present_string?(repo) -> {:error, :missing_github_repo}
+        not valid_repo?(repo) -> {:error, :invalid_github_repo}
+        not present_string?(token) -> {:error, :missing_github_token}
+        true -> {:ok, %{api_url: String.trim_trailing(api_url, "/"), repo: repo, token: token}}
+      end
     end
+  end
+
+  defp github_token(%{"token_command" => command}) when is_binary(command) do
+    if Path.type(command) == :absolute do
+      try do
+        case System.cmd(command, [], env: [{"GITHUB_TOKEN", nil}]) do
+          {output, 0} -> {:ok, normalize_string(output)}
+          {_output, _status} -> {:error, :github_token_command_failed}
+        end
+      rescue
+        ErlangError -> {:error, :github_token_command_failed}
+      end
+    else
+      {:error, :github_token_command_failed}
+    end
+  end
+
+  defp github_token(%{"token_command" => _command}), do: {:error, :github_token_command_failed}
+
+  defp github_token(provider) do
+    {:ok, resolve_setting(provider["token"], System.get_env("GITHUB_TOKEN"))}
   end
 
   defp provider_settings(%{provider: provider}) when is_map(provider), do: provider

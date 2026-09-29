@@ -102,6 +102,55 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
            ]
   end
 
+  test "client obtains a fresh app token for each request without using the owner's token" do
+    root = Path.join(System.tmp_dir!(), "symphony-app-token-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(root)
+    on_exit(fn -> File.rm_rf(root) end)
+
+    token_file = Path.join(root, "token")
+    command = Path.join(root, "token-command")
+    File.write!(token_file, "app-token-one\n")
+    File.write!(command, "#!/bin/sh\ncat #{token_file}\n")
+    File.chmod!(command, 0o700)
+
+    settings = tracker_settings(%{"token" => "owner-token", "token_command" => command})
+
+    request_fun = fn _method, _path, _params, _body, github_settings ->
+      send(self(), {:github_token_used, github_settings.token})
+      {:ok, %{status: 200, body: %{}}}
+    end
+
+    assert {:ok, %{status: 200}} =
+             GitHubClient.request("GET", "/user", %{}, nil,
+               tracker_settings: settings,
+               request_fun: request_fun
+             )
+
+    assert_receive {:github_token_used, "app-token-one"}
+
+    File.write!(token_file, "app-token-two\n")
+
+    assert {:ok, %{status: 200}} =
+             GitHubClient.request("GET", "/user", %{}, nil,
+               tracker_settings: settings,
+               request_fun: request_fun
+             )
+
+    assert_receive {:github_token_used, "app-token-two"}
+  end
+
+  test "client fails closed when the configured app token command fails" do
+    settings = tracker_settings(%{"token" => "owner-token", "token_command" => "/nonexistent/symphony-app-token"})
+
+    assert {:error, :github_token_command_failed} =
+             GitHubClient.request("GET", "/user", %{}, nil,
+               tracker_settings: settings,
+               request_fun: fn _method, _path, _params, _body, _github_settings ->
+                 flunk("a failed app credential must not use the owner's token")
+               end
+             )
+  end
+
   test "client normalizes GitHub issues without dropping provider details" do
     issue = GitHubClient.normalize_issue_for_test(raw_issue(42), "octo/repo")
 
