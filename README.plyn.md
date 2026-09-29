@@ -38,6 +38,10 @@ permissions. Git pushes use the app over HTTPS, and issue-workspace commits
 use the app bot's name and email. Authentication failures do not fall back to
 the Mac owner's GitHub account. Do not apply `symphony-pilot` to an issue until
 its scope and acceptance criteria have been reviewed for this pilot.
+Codex turns use `danger-full-access` because Codex protects `.git` metadata
+from writes in `workspace-write` mode, which prevents unattended commits.
+The workflow prompt instructs the agent to work in its isolated checkout; the GitHub
+App installation limits GitHub write access to `kolas-code/plyn`.
 
 The unattended service is a user LaunchAgent named
 `ai.openclaw.symphony.plyn`. Its installed plist is at

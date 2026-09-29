@@ -12,6 +12,9 @@ same app installation. The Git credential helper supplies the token only for
 the configured repository. Commits created in the issue workspace use the
 app bot's Git name and email, independently of the Mac owner's global Git
 configuration. The sibling `plyn-wiki` checkout remains read-only context.
+The unattended worker can create Git branches and commits in its isolated
+checkout, so a completed change can reach a pull request without a separate
+operator process.
 
 The app's private key and installation configuration stay outside Git and
 are readable only by the local user running Symphony. Short-lived tokens are

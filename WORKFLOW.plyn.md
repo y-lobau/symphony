@@ -28,10 +28,9 @@ agent:
 codex:
   command: /Applications/ChatGPT.app/Contents/Resources/codex app-server
   approval_policy: never
-  thread_sandbox: workspace-write
+  thread_sandbox: danger-full-access
   turn_sandbox_policy:
-    type: workspaceWrite
-    networkAccess: true
+    type: dangerFullAccess
 ---
 
 Work on GitHub issue {{ issue.identifier }} in `kolas-code/plyn`.
