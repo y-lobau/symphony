@@ -26,6 +26,7 @@ agent:
   max_turns: 8
 codex:
   command: /Applications/ChatGPT.app/Contents/Resources/codex app-server
+  approval_policy: never
   thread_sandbox: workspace-write
   turn_sandbox_policy:
     type: workspaceWrite
