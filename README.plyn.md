@@ -31,10 +31,34 @@ does not store a token in this checkout. It includes the acknowledgement flag
 required by Symphony's preview CLI. Do not apply `symphony-pilot` to an issue
 until its scope and acceptance criteria have been reviewed for this pilot.
 
-The pilot is run in the foreground for now. This Mac's LaunchAgent could not
-read the external-drive script and then stalled on headless GitHub credential
-access, so no background service is installed. The foreground run was verified
-through the dashboard API at `http://127.0.0.1:4097/api/v1/state` when started
-with `./scripts/run-plyn-symphony.sh --port 4097`.
+The unattended service is a user LaunchAgent named
+`ai.openclaw.symphony.plyn`. Its installed plist is at
+`~/Library/LaunchAgents/ai.openclaw.symphony.plyn.plist`, with a versioned copy
+in `launchd/`. The small wrapper is installed at
+`~/Library/Application Support/plyn-symphony/run.sh`, with its source in
+`scripts/run-plyn-symphony-launchd.sh`. launchd must open that wrapper and its
+stderr file on the internal disk. The wrapper starts the verified binary,
+workflow, issue workspaces, and Symphony logs directly on `/Volumes/ext` and
+reads the existing GitHub CLI credential at startup. No token is saved in the
+plist or repository. ChatGPT has Full Disk Access in macOS System Settings;
+this was needed for the process to use this external volume unattended.
+
+Control and inspect the service:
+
+```sh
+launchctl print gui/$(id -u)/ai.openclaw.symphony.plyn
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.symphony.plyn
+curl -fsS http://127.0.0.1:4097/api/v1/state
+```
+
+The dashboard is at `http://127.0.0.1:4097`. To stop the service, run
+`launchctl bootout gui/$(id -u)/ai.openclaw.symphony.plyn`; to load it again,
+run `launchctl bootstrap gui/$(id -u)
+~/Library/LaunchAgents/ai.openclaw.symphony.plyn.plist`. If either installed
+file changes, copy its versioned source to the installed path and reload the
+LaunchAgent. Keep the plist, wrapper, and stderr path on the internal disk;
+launchd cannot reliably open them directly on this volume. The service
+retries automatically after the external drive is mounted. A restart and a
+`200` response from the state endpoint were verified with no eligible issues.
 
 The older Python/Fibery service at `/Volumes/ext/git/symphony` is separate.

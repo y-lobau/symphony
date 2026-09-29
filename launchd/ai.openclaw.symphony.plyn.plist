@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>ai.openclaw.symphony.plyn</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/zsh</string>
+		<string>/Users/yanlobau/Library/Application Support/plyn-symphony/run.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/yanlobau/Library/Logs/plyn-symphony/stderr.log</string>
+	<key>StandardOutPath</key>
+	<string>/dev/null</string>
+	<key>ThrottleInterval</key>
+	<integer>60</integer>
+	<key>WorkingDirectory</key>
+	<string>/Users/yanlobau/Library/Application Support/plyn-symphony</string>
+</dict>
+</plist>
