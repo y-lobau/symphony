@@ -25,7 +25,8 @@ defmodule SymphonyElixir.GitHub.Adapter do
              tracker_settings.terminal_states,
              @terminal_states,
              :missing_github_terminal_states
-           ) do
+           ),
+         :ok <- validate_comment_policy(tracker_settings.provider) do
       Client.validate_settings(tracker_settings)
     end
   end
@@ -134,6 +135,14 @@ defmodule SymphonyElixir.GitHub.Adapter do
   end
 
   defp validate_states(_states, _allowed_states, missing_error), do: {:error, missing_error}
+
+  defp validate_comment_policy(provider) when is_map(provider) do
+    if Map.get(provider, "comment_policy") in [nil, "handoff_only"],
+      do: :ok,
+      else: {:error, :invalid_github_comment_policy}
+  end
+
+  defp validate_comment_policy(_provider), do: {:error, :invalid_github_comment_policy}
 
   defp normalize_state(state) when is_binary(state), do: state |> String.trim() |> String.downcase()
   defp normalize_state(_state), do: ""

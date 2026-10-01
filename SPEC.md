@@ -1150,6 +1150,15 @@ Plyn GitHub profile behavior:
 - The human replies in an issue comment and moves Project Status to `Ready` or `Backlog`. The issue
   is then eligible for a fresh run, which sets Project Status to `In progress` and reads recent
   issue comments. A pull request handoff moves the issue to `In review`.
+- In the Plyn profile, issue comments are reserved for one actionable human handoff per issue.
+  The agent reads existing comments and applicable approvals before asking. It posts a marked
+  handoff question only when no prior marked handoff exists, then stops for human input. If the
+  required human action materially changes, it edits that comment rather than posting another.
+  Routine progress and validation results belong in the pull request and Symphony history. The
+  configured GitHub tool rejects unmarked issue-comment creation, creation on another issue, and
+  a second marked handoff comment; a failed comment lookup rejects creation without posting.
+  An unrecognized policy value is a configuration error. Other GitHub API operations and profiles
+  without this policy retain their existing behavior.
 
 ### 10.6 Timeouts and Error Mapping
 

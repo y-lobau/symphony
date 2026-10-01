@@ -78,6 +78,10 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
     settings = tracker_settings()
 
     assert :ok = GitHubAdapter.validate_config(settings)
+    assert :ok = GitHubAdapter.validate_config(tracker_settings(%{"comment_policy" => "handoff_only"}))
+
+    assert {:error, :invalid_github_comment_policy} =
+             GitHubAdapter.validate_config(tracker_settings(%{"comment_policy" => "unrestricted"}))
 
     assert {:error, :missing_github_active_states} =
              GitHubAdapter.validate_config(%{settings | active_states: nil})
@@ -492,6 +496,136 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
         assert invalid["success"] == false
       end
     )
+  end
+
+  test "handoff-only policy permits one marked question on the current issue" do
+    test_pid = self()
+    settings = tracker_settings(%{"comment_policy" => "handoff_only"})
+    issue = %Issue{id: "42", identifier: "GH-42"}
+    path = "/repos/octo/repo/issues/42/comments"
+
+    client = fn method, requested_path, params, body, _opts ->
+      send(test_pid, {:request, method, requested_path, params, body})
+
+      case method do
+        "GET" -> {:ok, %{status: 200, body: []}}
+        "POST" -> {:ok, %{status: 201, body: %{"id" => 7}}}
+      end
+    end
+
+    question = "Please confirm the simulator target.\n\n<!-- symphony:human-handoff -->"
+
+    response =
+      GitHubAgentTool.execute(
+        "github_api",
+        %{"method" => "POST", "path" => path, "body" => %{"body" => question}},
+        tracker_settings: settings,
+        issue: issue,
+        github_client: client
+      )
+
+    assert response["success"]
+    assert_received {:request, "GET", ^path, %{"page" => 1, "per_page" => 100}, nil}
+    assert_received {:request, "POST", ^path, %{}, %{"body" => ^question}}
+
+    for {comment_path, text} <- [
+          {path, "progress update"},
+          {"/repos/octo/repo/issues/43/comments", question},
+          {"/repos/octo/repo/issues/42/%63omments", question},
+          {"/repos/octo/repo/issues/42/comments?foo=bar", question},
+          {path, "<!-- symphony:human-handoff -->"}
+        ] do
+      rejected =
+        GitHubAgentTool.execute(
+          "github_api",
+          %{"method" => "POST", "path" => comment_path, "body" => %{"body" => text}},
+          tracker_settings: settings,
+          issue: issue,
+          github_client: fn _, _, _, _, _ -> flunk("rejected comment must not call GitHub") end
+        )
+
+      refute rejected["success"]
+    end
+  end
+
+  test "handoff-only policy finds earlier questions across pages and fails closed on lookup errors" do
+    settings = tracker_settings(%{"comment_policy" => "handoff_only"})
+    issue = %Issue{id: "42", identifier: "GH-42"}
+    path = "/repos/octo/repo/issues/42/comments"
+    question = "New blocker\n<!-- symphony:human-handoff -->"
+    previous = %{"id" => 11, "body" => "Old blocker\n<!-- symphony:human-handoff -->"}
+    test_pid = self()
+
+    duplicate =
+      GitHubAgentTool.execute(
+        "github_api",
+        %{"method" => "POST", "path" => path, "body" => %{"body" => question}},
+        tracker_settings: settings,
+        issue: issue,
+        github_client: fn method, requested_path, params, _body, _opts ->
+          send(test_pid, {:request, method, requested_path, params})
+          assert method == "GET"
+          assert requested_path == path
+
+          comments =
+            if params["page"] == 1,
+              do: List.duplicate(%{"id" => 10, "body" => "old progress"}, 100),
+              else: [previous]
+
+          {:ok, %{status: 200, body: comments}}
+        end
+      )
+
+    refute duplicate["success"]
+    assert Jason.decode!(duplicate["output"])["error"]["existingCommentId"] == 11
+    assert_received {:request, "GET", ^path, %{"page" => 1}}
+    assert_received {:request, "GET", ^path, %{"page" => 2}}
+
+    failure =
+      GitHubAgentTool.execute(
+        "github_api",
+        %{"method" => "POST", "path" => path, "body" => %{"body" => question}},
+        tracker_settings: settings,
+        issue: issue,
+        github_client: fn method, _, _, _, _ ->
+          assert method == "GET"
+          {:ok, %{status: 503, body: %{"message" => "Unavailable"}}}
+        end
+      )
+
+    refute failure["success"]
+
+    malformed =
+      GitHubAgentTool.execute(
+        "github_api",
+        %{"method" => "POST", "path" => path, "body" => %{"body" => question}},
+        tracker_settings: settings,
+        issue: issue,
+        github_client: fn method, _, _, _, _ ->
+          assert method == "GET"
+          {:ok, %{status: 200, body: [%{"body" => "missing id"}]}}
+        end
+      )
+
+    refute malformed["success"]
+
+    edited =
+      GitHubAgentTool.execute(
+        "github_api",
+        %{
+          "method" => "PATCH",
+          "path" => "/repos/octo/repo/issues/comments/11",
+          "body" => %{"body" => question}
+        },
+        tracker_settings: settings,
+        issue: issue,
+        github_client: fn method, _, _, _, _ ->
+          assert method == "PATCH"
+          {:ok, %{status: 200, body: %{"id" => 11}}}
+        end
+      )
+
+    assert edited["success"]
   end
 
   test "github_api reports unsupported tools, malformed calls, and client failures" do

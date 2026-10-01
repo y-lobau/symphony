@@ -35,6 +35,12 @@ status to **In progress**. After a pull request is opened, the agent moves the
 issue to **In review**. The GitHub App needs organization Projects read/write
 permission for these Project Status updates.
 
+The Plyn workflow enables `tracker.provider.comment_policy: handoff_only`.
+The agent uses one marked issue comment for a human action request, edits it
+when the required action changes, and keeps routine progress and validation in
+the pull request and Symphony history. The GitHub tool rejects duplicate or
+unmarked issue-comment creation; other GitHub API actions remain available.
+
 Start in the foreground:
 
 ```sh

@@ -4,8 +4,12 @@ defmodule SymphonyElixir.GitHub.AgentTool do
   """
 
   alias SymphonyElixir.GitHub.Client
+  alias SymphonyElixir.Tracker.Issue
 
   @github_api_tool "github_api"
+  @handoff_marker "<!-- symphony:human-handoff -->"
+  @issue_comments_path ~r{^/repos/[^/]+/[^/]+/issues/[0-9]+/comments(?:/|[?#]|$)}
+  @max_comment_pages 100
   @allowed_methods ["GET", "POST", "PATCH", "PUT", "DELETE"]
   @github_api_description """
   Execute a GitHub REST API request using Symphony's configured auth.
@@ -59,6 +63,7 @@ defmodule SymphonyElixir.GitHub.AgentTool do
     client_opts = Keyword.take(opts, [:tracker_settings])
 
     with {:ok, method, path, params, body} <- normalize_arguments(arguments),
+         :ok <- authorize_comment_creation(method, path, body, opts, github_client, client_opts),
          {:ok, %{status: status, body: response_body}} <-
            github_client.(method, path, params, body, client_opts),
          true <- is_integer(status) do
@@ -101,6 +106,78 @@ defmodule SymphonyElixir.GitHub.AgentTool do
   defp normalize_params(nil), do: {:ok, %{}}
   defp normalize_params(params) when is_map(params), do: {:ok, params}
   defp normalize_params(_params), do: {:error, :invalid_params}
+
+  defp authorize_comment_creation("POST", path, body, opts, github_client, client_opts) do
+    if handoff_only?(opts) and Regex.match?(@issue_comments_path, URI.decode(path)) do
+      with :ok <- validate_handoff_target(path, opts),
+           :ok <- validate_handoff_body(body) do
+        ensure_no_handoff_comment(path, github_client, client_opts, 1)
+      end
+    else
+      :ok
+    end
+  end
+
+  defp authorize_comment_creation(_method, _path, _body, _opts, _client, _client_opts), do: :ok
+
+  defp handoff_only?(opts) do
+    case Keyword.get(opts, :tracker_settings) do
+      %{provider: %{"comment_policy" => "handoff_only"}} -> true
+      _ -> false
+    end
+  end
+
+  defp validate_handoff_target(path, opts) do
+    with %{provider: %{"repo" => repo}} <- Keyword.get(opts, :tracker_settings),
+         %Issue{id: issue_id} <- Keyword.get(opts, :issue),
+         true <- path == "/repos/#{repo}/issues/#{issue_id}/comments" do
+      :ok
+    else
+      _ -> {:error, :handoff_wrong_issue}
+    end
+  end
+
+  defp validate_handoff_body(%{"body" => text}) when is_binary(text) do
+    if String.contains?(text, @handoff_marker) and
+         text |> String.replace(@handoff_marker, "") |> String.trim() |> byte_size() > 0 do
+      :ok
+    else
+      {:error, :handoff_marker_required}
+    end
+  end
+
+  defp validate_handoff_body(_body), do: {:error, :handoff_marker_required}
+
+  defp ensure_no_handoff_comment(_path, _github_client, _client_opts, page)
+       when page > @max_comment_pages,
+       do: {:error, :handoff_lookup_failed}
+
+  defp ensure_no_handoff_comment(path, github_client, client_opts, page) do
+    params = %{"per_page" => 100, "page" => page}
+
+    case github_client.("GET", path, params, nil, client_opts) do
+      {:ok, %{status: 200, body: comments}} when is_list(comments) ->
+        inspect_handoff_page(comments, path, github_client, client_opts, page)
+
+      _ ->
+        {:error, :handoff_lookup_failed}
+    end
+  end
+
+  defp inspect_handoff_page(comments, path, github_client, client_opts, page) do
+    if Enum.all?(comments, &valid_comment?/1) do
+      case Enum.find(comments, &String.contains?(&1["body"], @handoff_marker)) do
+        %{"id" => id} -> {:error, {:handoff_exists, id}}
+        nil when length(comments) == 100 -> ensure_no_handoff_comment(path, github_client, client_opts, page + 1)
+        nil -> :ok
+      end
+    else
+      {:error, :handoff_lookup_failed}
+    end
+  end
+
+  defp valid_comment?(%{"id" => id, "body" => body}) when is_integer(id) and is_binary(body), do: true
+  defp valid_comment?(_comment), do: false
 
   defp rest_response(status, body) do
     dynamic_tool_response(status in 200..299, encode_payload(%{"status" => status, "body" => body}))
@@ -146,6 +223,22 @@ defmodule SymphonyElixir.GitHub.AgentTool do
 
   defp tool_error_payload(:invalid_params) do
     %{"error" => %{"message" => "`github_api.params` must be a JSON object when provided."}}
+  end
+
+  defp tool_error_payload(:handoff_wrong_issue) do
+    %{"error" => %{"message" => "Issue comments may be created only on the current issue."}}
+  end
+
+  defp tool_error_payload(:handoff_marker_required) do
+    %{"error" => %{"message" => "Only a marked human handoff question may be posted as an issue comment."}}
+  end
+
+  defp tool_error_payload({:handoff_exists, id}) do
+    %{"error" => %{"message" => "A handoff comment already exists. Edit it only if the required human action changed.", "existingCommentId" => id}}
+  end
+
+  defp tool_error_payload(:handoff_lookup_failed) do
+    %{"error" => %{"message" => "Could not verify existing handoff comments; no comment was posted."}}
   end
 
   defp tool_error_payload(:missing_github_token) do
