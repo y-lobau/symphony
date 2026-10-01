@@ -41,6 +41,7 @@ defmodule SymphonyElixir.HistoryWebTest do
 
     issue = %{id: "issue-301", identifier: "GH-301", title: "Improve dictation", state: "open", project_status: "In progress", url: "https://github.com/kolas-code/plyn/issues/301"}
     assert {:ok, run_id} = History.start_run(issue, %{workflow_revision: "rev-1", model: "gpt-6-sol", reasoning_effort: "high"}, history)
+    completed_tokens = %{input_tokens: 100, cached_input_tokens: 80, output_tokens: 3, total_tokens: 103}
 
     assert :ok =
              History.record_update(
@@ -50,7 +51,7 @@ defmodule SymphonyElixir.HistoryWebTest do
                  timestamp: DateTime.utc_now(),
                  payload: %{"method" => "item/completed", "params" => %{"item" => %{"type" => "agentMessage", "text" => "private message body"}}}
                },
-               %{input_tokens: 5, output_tokens: 3, total_tokens: 8},
+               completed_tokens,
                history
              )
 
@@ -58,24 +59,43 @@ defmodule SymphonyElixir.HistoryWebTest do
              History.finish_run(
                run_id,
                :completed,
-               %{ended_at: DateTime.utc_now(), tokens: %{input_tokens: 5, output_tokens: 3, total_tokens: 8}},
+               %{ended_at: DateTime.utc_now(), tokens: completed_tokens},
                history
              )
 
     list = get(build_conn(), "/api/v1/history?limit=10&offset=0") |> json_response(200)
     assert list["total"] == 1
     assert hd(list["issues"])["identifier"] == "GH-301"
+    assert hd(list["issues"])["cached_input_tokens"] == 80
 
     detail = get(build_conn(), "/api/v1/history/GH-301") |> json_response(200)
-    assert detail["summary"]["total_tokens"] == 8
+    assert detail["summary"]["total_tokens"] == 103
+    assert detail["summary"]["cached_input_tokens"] == 80
+    assert detail["summary"]["uncached_input_tokens"] == 20
+    assert hd(detail["runs"])["tokens"]["cached_input_tokens"] == 80
+    assert hd(detail["runs"])["tokens"]["uncached_input_tokens"] == 20
     assert length(detail["runs"]) == 1
     refute inspect(detail) =~ "private message body"
 
     {:ok, _view, html} = live(build_conn(), "/history/GH-301")
     assert html =~ "Improve dictation"
     assert html =~ "Timeline"
-    assert html =~ "8"
+    assert html =~ "Cached input"
+    assert html =~ "Non-cached input"
+    assert html =~ "Total processed tokens"
+    assert html =~ "Cached input is included in the total."
+    assert html =~ "103"
     refute html =~ "private message body"
+
+    assert {:ok, older_run} = History.start_run(issue, %{}, history)
+    older_tokens = %{input_tokens: 40, output_tokens: 2, total_tokens: 42}
+    assert :ok = History.finish_run(older_run, :completed, %{tokens: older_tokens}, history)
+    mixed = get(build_conn(), "/api/v1/history/GH-301") |> json_response(200)
+    assert mixed["summary"]["cached_input_tokens"] == nil
+    assert mixed["summary"]["uncached_input_tokens"] == nil
+    {:ok, _view, mixed_html} = live(build_conn(), "/history/GH-301")
+    assert mixed_html =~ "Cached input Unknown"
+    assert mixed_html =~ "Non-cached input Unknown"
   end
 
   test "current runtime state is visible on a recorded issue without replacing its tracker status" do

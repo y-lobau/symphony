@@ -1653,15 +1653,23 @@ from logs. Records survive service restarts and are retained without an automati
   contains ordered coding-agent turns and timestamped events. A new worker run after a retry or a
   human reply belongs to the same issue.
 - An issue summary shows its latest observed tracker status and observation time, pull request links,
-  aggregate input/output/total tokens, active worker runtime, completed agent-message count, human
-  input handoff count, and latest run outcome. Live scheduler status takes precedence while an issue
+  aggregate input/output/total tokens, cached input and non-cached input, active worker runtime,
+  completed agent-message count, human input handoff count, and latest run outcome. Live scheduler
+  status takes precedence while an issue
   is running, retrying, or blocked. A tracker refresh updates older issue statuses without creating
   another run; a failed refresh leaves the last observation visibly dated.
 - Each run records its start/end, outcome (`completed`, `human_input`, `failed`, `cancelled`, or
-  `interrupted`), token counts, active runtime, agent-message count, and the workflow revision,
-  coding-agent model, and reasoning effort actually used. Unknown model or effort is displayed as
+  `interrupted`), token counts including cached input when reported by the coding agent, active
+  runtime, agent-message count, and the workflow revision, coding-agent model, and reasoning effort
+  actually used. Unknown model or effort is displayed as
   unknown rather than inferred. An open run's runtime increases while it executes. A run still open
   when the service restarts is marked interrupted.
+- Cached input is a subset of input tokens, and non-cached input equals input minus cached input.
+  Total tokens still includes all input and output tokens. The dashboard labels the total as processed
+  tokens, shows the cached/non-cached split beside it and for each run, and explains that cached
+  tokens are included in the total. If cache usage was not reported or was not retained for an older
+  run, the split is unknown rather than displayed as zero. Issue aggregates are unknown when any
+  nonzero-input run lacks cache data. Existing total/input/output values remain available.
 - Count one agent message only when the coding-agent protocol reports a completed agent-authored
   message. Streaming deltas, reasoning, tool calls, and protocol notifications do not add to this
   count. Count each human-input stop once; keep its timestamp, signal, and available short reason as

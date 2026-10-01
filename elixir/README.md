@@ -312,9 +312,11 @@ The observability UI now runs on a minimal Phoenix stack:
 - Tracker issue identifiers link to the tracker-provided URL when it uses `http` or `https`
 
 History starts recording when this version first runs; it does not reconstruct older sessions.
-Issue pages show active and past runs, token use, active runtime, completed Codex messages,
-human handoffs, outcomes, model and reasoning effort, PR links, and observed events. They do
-not retain message bodies, reasoning, or tool payloads. Records are retained until the history
+Issue pages show active and past runs, total processed tokens with cached and non-cached input,
+active runtime, completed Codex messages, human handoffs, outcomes, model and reasoning effort,
+PR links, and observed events. Cached input is included in the total; older runs without a retained
+cache count show an unknown split. They do not retain message bodies, reasoning, or tool payloads.
+Records are retained until the history
 file is removed. The store is `history/history.dets` under `--logs-root`, or `var/history/history.dets`
 beside the workflow file when that flag is absent. Keep this file across service upgrades.
 

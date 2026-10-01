@@ -254,7 +254,7 @@ defmodule SymphonyElixir.History do
         {:reply, {:error, :issue_not_found}, state}
 
       issue ->
-        runs = issue.run_ids |> Enum.map(&lookup_run(state.table, &1)) |> Enum.flat_map(&unwrap_run/1) |> Enum.map(&with_current_duration/1)
+        runs = issue.run_ids |> Enum.map(&lookup_run(state.table, &1)) |> Enum.flat_map(&unwrap_run/1) |> Enum.map(&with_current_duration/1) |> Enum.map(&with_token_breakdown/1)
         {:reply, {:ok, %{summary: summary(state.table, issue), runs: runs}}, state}
     end
   end
@@ -380,6 +380,8 @@ defmodule SymphonyElixir.History do
   defp summary(table, issue) do
     runs = issue.run_ids |> Enum.map(&lookup_run(table, &1)) |> Enum.flat_map(&unwrap_run/1) |> Enum.map(&with_current_duration/1)
     latest = List.last(runs)
+    input_tokens = Enum.sum(Enum.map(runs, & &1.tokens.input_tokens))
+    cached_input_tokens = aggregate_cached_input(runs)
 
     %{
       id: issue.id,
@@ -391,7 +393,9 @@ defmodule SymphonyElixir.History do
       latest_at: issue.latest_at,
       pull_requests: issue.pull_requests,
       run_count: length(runs),
-      input_tokens: Enum.sum(Enum.map(runs, & &1.tokens.input_tokens)),
+      input_tokens: input_tokens,
+      cached_input_tokens: cached_input_tokens,
+      uncached_input_tokens: uncached_input(input_tokens, cached_input_tokens),
       output_tokens: Enum.sum(Enum.map(runs, & &1.tokens.output_tokens)),
       total_tokens: Enum.sum(Enum.map(runs, & &1.tokens.total_tokens)),
       duration_seconds: Enum.sum(Enum.map(runs, & &1.duration_seconds)),
@@ -457,8 +461,11 @@ defmodule SymphonyElixir.History do
   end
 
   defp normalize_tokens(tokens, fallback) when is_map(tokens) do
+    input_tokens = nonnegative(value(tokens, :input_tokens), fallback.input_tokens)
+
     %{
-      input_tokens: nonnegative(value(tokens, :input_tokens), fallback.input_tokens),
+      input_tokens: input_tokens,
+      cached_input_tokens: cached_input(value(tokens, :cached_input_tokens), Map.get(fallback, :cached_input_tokens), input_tokens),
       output_tokens: nonnegative(value(tokens, :output_tokens), fallback.output_tokens),
       total_tokens: nonnegative(value(tokens, :total_tokens), fallback.total_tokens)
     }
@@ -467,7 +474,25 @@ defmodule SymphonyElixir.History do
   defp normalize_tokens(_tokens, fallback), do: fallback
   defp nonnegative(value, _fallback) when is_integer(value) and value >= 0, do: value
   defp nonnegative(_value, fallback), do: fallback
-  defp zero_tokens, do: %{input_tokens: 0, output_tokens: 0, total_tokens: 0}
+  defp zero_tokens, do: %{input_tokens: 0, cached_input_tokens: nil, output_tokens: 0, total_tokens: 0}
+
+  defp cached_input(value, _fallback, input) when is_integer(value) and value >= 0 and value <= input, do: value
+  defp cached_input(_value, fallback, input) when is_integer(fallback) and fallback <= input, do: fallback
+  defp cached_input(_value, _fallback, _input), do: nil
+
+  defp uncached_input(input, cached) when is_integer(cached), do: input - cached
+  defp uncached_input(_input, _cached), do: nil
+
+  defp with_token_breakdown(run) do
+    cached = Map.get(run.tokens, :cached_input_tokens)
+    %{run | tokens: run.tokens |> Map.put(:cached_input_tokens, cached) |> Map.put(:uncached_input_tokens, uncached_input(run.tokens.input_tokens, cached))}
+  end
+
+  defp aggregate_cached_input(runs) do
+    if Enum.all?(runs, fn run -> run.tokens.input_tokens == 0 or is_integer(Map.get(run.tokens, :cached_input_tokens)) end) do
+      Enum.sum(Enum.map(runs, &(Map.get(&1.tokens, :cached_input_tokens) || 0)))
+    end
+  end
 
   defp sanitize_stop(nil, _at), do: nil
 

@@ -71,7 +71,7 @@ defmodule SymphonyElixirWeb.HistoryLive do
                   <h3><%= issue.title %></h3>
                   <p class="muted"><%= if issue.runtime_status, do: "Runtime: #{String.capitalize(issue.runtime_status)} · ", else: "" %>Tracker status: <%= issue.status || "unknown" %> · observed <%= issue.status_observed_at || "unknown" %></p>
                   <div class="history-issue-metrics numeric">
-                    <span><strong><%= format_int(issue.total_tokens) %></strong> tokens</span>
+                    <span><strong><%= format_int(issue.total_tokens) %></strong> processed tokens (<%= format_optional_int(issue.cached_input_tokens) %> cached input)</span>
                     <span><strong><%= format_duration(issue.duration_seconds) %></strong> runtime</span>
                     <span><strong><%= issue.message_count %></strong> messages</span>
                     <span><strong><%= issue.human_handoffs %></strong> human handoffs</span>
@@ -100,7 +100,7 @@ defmodule SymphonyElixirWeb.HistoryLive do
           </section>
 
           <section class="metric-grid" aria-label="Issue totals">
-            <article class="metric-card"><p class="metric-label">Total tokens</p><p class="metric-value numeric"><%= format_int(summary.total_tokens) %></p><p class="metric-detail numeric">In <%= format_int(summary.input_tokens) %> / Out <%= format_int(summary.output_tokens) %></p></article>
+            <article class="metric-card"><p class="metric-label">Total processed tokens</p><p class="metric-value numeric"><%= format_int(summary.total_tokens) %></p><p class="metric-detail numeric">Input <%= format_int(summary.input_tokens) %> · Output <%= format_int(summary.output_tokens) %></p><p class="metric-detail numeric">Cached input <%= format_optional_int(summary.cached_input_tokens) %> · Non-cached input <%= format_optional_int(summary.uncached_input_tokens) %></p><p class="metric-detail">Cached input is included in the total.</p></article>
             <article class="metric-card"><p class="metric-label">Active runtime</p><p class="metric-value numeric"><%= format_duration(summary.duration_seconds) %></p><p class="metric-detail">Across <%= summary.run_count %> runs</p></article>
             <article class="metric-card"><p class="metric-label">Codex messages</p><p class="metric-value numeric"><%= summary.message_count %></p><p class="metric-detail">Completed progress and final messages</p></article>
             <article class="metric-card"><p class="metric-label">Human handoffs</p><p class="metric-value numeric"><%= summary.human_handoffs %></p><p class="metric-detail">Runs stopped for human input</p></article>
@@ -117,7 +117,9 @@ defmodule SymphonyElixirWeb.HistoryLive do
                     <time class="mono" datetime={run.started_at}><%= run.started_at %></time>
                   </div>
                   <div class="history-run-metrics numeric">
-                    <span><%= format_int(run.tokens.total_tokens) %> tokens</span>
+                    <span><%= format_int(run.tokens.total_tokens) %> processed tokens</span>
+                    <span>Cached input <%= format_optional_int(run.tokens.cached_input_tokens) %></span>
+                    <span>Non-cached input <%= format_optional_int(run.tokens.uncached_input_tokens) %></span>
                     <span><%= format_duration(run.duration_seconds) %></span>
                     <span><%= run.message_count %> messages</span>
                     <span><%= run.turn_count %> turns</span>
@@ -165,6 +167,8 @@ defmodule SymphonyElixirWeb.HistoryLive do
   defp snapshot_timeout_ms, do: Endpoint.config(:snapshot_timeout_ms) || 15_000
 
   defp format_int(value) when is_integer(value), do: Integer.to_string(value) |> String.replace(~r/(?<=\d)(?=(\d{3})+$)/, ",")
+  defp format_optional_int(value) when is_integer(value), do: format_int(value)
+  defp format_optional_int(_value), do: "Unknown"
   defp format_duration(seconds) when is_integer(seconds), do: "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
   defp pull_number(url), do: url |> String.split("/") |> List.last()
   defp outcome_label("running"), do: "Running"

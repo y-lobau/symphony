@@ -173,6 +173,38 @@ defmodule SymphonyElixir.HistoryTest do
     GenServer.stop(pid)
   end
 
+  test "cached input is a subset of input and missing cache data stays unknown", ctx do
+    {:ok, _pid} = History.start_link(path: ctx.path, name: ctx.name, table: ctx.table)
+    issue = issue("GH-203")
+    assert {:ok, first_id} = History.start_run(issue, %{}, ctx.name)
+
+    assert :ok =
+             History.finish_run(
+               first_id,
+               :completed,
+               %{
+                 tokens: %{input_tokens: 100, cached_input_tokens: 80, output_tokens: 5, total_tokens: 105}
+               },
+               ctx.name
+             )
+
+    assert {:ok, detail} = History.get_issue(issue.identifier, ctx.name)
+    assert detail.summary.cached_input_tokens == 80
+    assert detail.summary.uncached_input_tokens == 20
+    assert hd(detail.runs).tokens.cached_input_tokens == 80
+    assert hd(detail.runs).tokens.uncached_input_tokens == 20
+
+    assert {:ok, second_id} = History.start_run(issue, %{}, ctx.name)
+    assert :ok = History.finish_run(second_id, :completed, %{tokens: tokens(40, 2, 42)}, ctx.name)
+
+    assert {:ok, mixed} = History.get_issue(issue.identifier, ctx.name)
+    assert mixed.summary.input_tokens == 140
+    assert mixed.summary.cached_input_tokens == nil
+    assert mixed.summary.uncached_input_tokens == nil
+    assert List.last(mixed.runs).tokens.cached_input_tokens == nil
+    assert List.last(mixed.runs).tokens.uncached_input_tokens == nil
+  end
+
   defp issue(identifier) do
     %{
       id: identifier,
@@ -244,6 +276,19 @@ defmodule SymphonyElixir.HistoryOrchestratorTest do
 
     message = %{event: :notification, timestamp: now, payload: %{"method" => "item/completed", "params" => %{"item" => %{"type" => "agentMessage"}}}}
     assert {:noreply, state} = Orchestrator.handle_info({:codex_worker_update, issue.id, message}, state)
+
+    usage = %{
+      event: :notification,
+      timestamp: now,
+      payload: %{
+        "method" => "thread/tokenUsage/updated",
+        "params" => %{"tokenUsage" => %{"total" => %{"input_tokens" => 100, "cached_input_tokens" => 80, "output_tokens" => 5, "total_tokens" => 105}}}
+      }
+    }
+
+    assert {:noreply, state} = Orchestrator.handle_info({:codex_worker_update, issue.id, usage}, state)
+    assert {:noreply, state} = Orchestrator.handle_info({:codex_worker_update, issue.id, usage}, state)
+    assert state.running[issue.id].codex_cached_input_tokens == 80
     assert {:noreply, _state} = Orchestrator.handle_info({:DOWN, ref, :process, self(), :normal}, state)
 
     assert {:ok, detail} = History.get_issue("GH-501", name)
@@ -252,6 +297,9 @@ defmodule SymphonyElixir.HistoryOrchestratorTest do
     assert run.message_count == 1
     assert run.model == "gpt-6-sol"
     assert run.turn_count == 1
+    assert run.tokens.input_tokens == 100
+    assert run.tokens.cached_input_tokens == 80
+    assert run.tokens.uncached_input_tokens == 20
   end
 end
 
