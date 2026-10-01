@@ -100,6 +100,7 @@ defmodule SymphonyElixir.HistoryWebTest do
     assert html =~ "Total processed tokens"
     assert html =~ "Context compactions"
     assert html =~ "Context compacted"
+    assert html =~ "1 compaction</span>"
     assert html =~ "Cached input is included in the total."
     assert html =~ "103"
     refute html =~ "private message body"

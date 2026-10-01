@@ -74,7 +74,7 @@ defmodule SymphonyElixirWeb.HistoryLive do
                     <span><strong><%= format_int(issue.total_tokens) %></strong> processed tokens (<%= format_optional_int(issue.cached_input_tokens) %> cached input)</span>
                     <span><strong><%= format_duration(issue.duration_seconds) %></strong> runtime</span>
                     <span><strong><%= issue.message_count %></strong> messages</span>
-                    <span><strong><%= format_optional_int(issue.compaction_count) %></strong> compactions</span>
+                    <span><strong><%= format_optional_int(issue.compaction_count) %></strong> <%= compaction_noun(issue.compaction_count) %></span>
                     <span><strong><%= issue.human_handoffs %></strong> human handoffs</span>
                   </div>
                 </a>
@@ -124,7 +124,7 @@ defmodule SymphonyElixirWeb.HistoryLive do
                     <span>Non-cached input <%= format_optional_int(run.tokens.uncached_input_tokens) %></span>
                     <span><%= format_duration(run.duration_seconds) %></span>
                     <span><%= run.message_count %> messages</span>
-                    <span><%= format_optional_int(run.compaction_count) %> compactions</span>
+                    <span><%= format_optional_int(run.compaction_count) %> <%= compaction_noun(run.compaction_count) %></span>
                     <span><%= run.turn_count %> turns</span>
                   </div>
                   <p class="history-run-context muted">Workflow <%= run.workflow_revision || "unknown" %> · Model <%= run.model || "unknown" %> · Reasoning <%= run.reasoning_effort || "unknown" %></p>
@@ -172,6 +172,8 @@ defmodule SymphonyElixirWeb.HistoryLive do
   defp format_int(value) when is_integer(value), do: Integer.to_string(value) |> String.replace(~r/(?<=\d)(?=(\d{3})+$)/, ",")
   defp format_optional_int(value) when is_integer(value), do: format_int(value)
   defp format_optional_int(_value), do: "Unknown"
+  defp compaction_noun(1), do: "compaction"
+  defp compaction_noun(_), do: "compactions"
   defp format_duration(seconds) when is_integer(seconds), do: "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
   defp pull_number(url), do: url |> String.split("/") |> List.last()
   defp outcome_label("running"), do: "Running"
