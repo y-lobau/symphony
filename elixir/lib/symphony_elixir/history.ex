@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.History do
   @moduledoc """
-  Durable, content-free issue and worker-run history for observability.
+  Durable issue and worker-run history with a bounded latest agent output.
   """
 
   use GenServer
@@ -8,6 +8,7 @@ defmodule SymphonyElixir.History do
 
   @default_table :symphony_issue_history
   @max_reason_length 500
+  @max_output_length 500
   @observed_errors [
     :turn_failed,
     :turn_cancelled,
@@ -105,6 +106,7 @@ defmodule SymphonyElixir.History do
       duration_seconds: 0,
       tokens: zero_tokens(),
       message_count: 0,
+      last_output: nil,
       compaction_count: 0,
       turn_count: 0,
       session_ids: [],
@@ -262,6 +264,7 @@ defmodule SymphonyElixir.History do
           |> Enum.map(&with_current_duration/1)
           |> Enum.map(&with_token_breakdown/1)
           |> Enum.map(&with_compaction_count/1)
+          |> Enum.map(&with_last_output/1)
 
         {:reply, {:ok, %{summary: summary(state.table, issue), runs: runs}}, state}
     end
@@ -448,7 +451,13 @@ defmodule SymphonyElixir.History do
 
   defp record_completed_message(run, update, at) do
     if completed_agent_message?(update) do
-      %{run | message_count: run.message_count + 1, events: run.events ++ [event(at, "agent_message", "Codex message completed")]}
+      output = completed_agent_output(update, at) || Map.get(run, :last_output)
+
+      Map.merge(run, %{
+        message_count: run.message_count + 1,
+        last_output: output,
+        events: run.events ++ [event(at, "agent_message", "Codex message completed")]
+      })
     else
       run
     end
@@ -460,6 +469,30 @@ defmodule SymphonyElixir.History do
     item = value(value(payload, :params), :item)
     method == "item/completed" and value(item, :type) in ["agentMessage", "agent_message"]
   end
+
+  defp completed_agent_output(update, at) do
+    payload = value(update, :payload) || value(value(update, :message), :payload)
+    item = value(value(payload, :params), :item)
+
+    case normalize_output(value(item, :text)) do
+      nil -> nil
+      text -> %{text: text, at: at}
+    end
+  end
+
+  defp normalize_output(text) when is_binary(text) do
+    text =
+      text
+      |> String.replace(~r/\e\[[0-9;]*[A-Za-z]/u, "")
+      |> String.replace(~r/[\x00-\x1F\x7F]/u, " ")
+      |> String.replace(~r/\s+/u, " ")
+      |> String.trim()
+      |> String.slice(0, @max_output_length)
+
+    if text == "", do: nil, else: text
+  end
+
+  defp normalize_output(_), do: nil
 
   defp record_completed_compaction(run, update, at) do
     payload = value(update, :payload) || value(value(update, :message), :payload)
@@ -513,6 +546,7 @@ defmodule SymphonyElixir.History do
   end
 
   defp with_compaction_count(run), do: Map.put_new(run, :compaction_count, nil)
+  defp with_last_output(run), do: Map.put_new(run, :last_output, nil)
 
   defp aggregate_compactions(runs) do
     if Enum.all?(runs, &is_integer(Map.get(&1, :compaction_count))) do

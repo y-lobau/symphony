@@ -1665,6 +1665,13 @@ from logs. Records survive service restarts and are retained without an automati
   actually used. Unknown model or effort is displayed as
   unknown rather than inferred. An open run's runtime increases while it executes. A run still open
   when the service restarts is marked interrupted.
+- Each run retains only the latest completed agent-authored progress or final-message excerpt and
+  its timestamp. The excerpt is normalized to one line and limited to 500 characters; a newer
+  completed agent message replaces the previous one. Reasoning, tool output, protocol notifications,
+  and streaming fragments do not replace it. Runs without a retained excerpt show an unavailable
+  state, including runs recorded before this field existed. A connected issue page updates the
+  excerpt when a new completed agent message arrives, and completed runs retain their last excerpt
+  across a service restart. Full messages and transcripts are not kept in history.
 - Cached input is a subset of input tokens, and non-cached input equals input minus cached input.
   Total tokens still includes all input and output tokens. The dashboard labels the total as processed
   tokens, shows the cached/non-cached split beside it and for each run, and explains that cached
@@ -1676,20 +1683,19 @@ from logs. Records survive service restarts and are retained without an automati
   count. Count each human-input stop once; keep its timestamp, signal, and available short reason as
   a structured stop record without assigning a fixed reason category.
 - Count a context compaction only when the coding-agent protocol reports a completed compaction
-  item. Show its timestamp on the timeline. Do not infer compactions from token volume, context
+  item. Retain its timestamp as a structural event. Do not infer compactions from token volume, context
   size, or turn boundaries. Runs recorded before compaction tracking have an unknown count unless
   reliable event evidence is available; an issue total is unknown if any run's count is unknown.
-- The timeline is chronological and shows observed run/turn boundaries, completed agent messages,
-  retries, errors, human-input stops, tracker status changes, and pull request creation. Events use
-  short descriptions and a safe cause for a failed run when one is known, including failures before
-  the first coding-agent turn. Full prompts, reasoning, message bodies, tool arguments, and tool
-  outputs are not persisted. Individual tool calls are not timeline entries in this version. No
-  timeline filters or inferred planning/coding phases are required.
+- The history store may retain short structural events for diagnostics, including retries, errors,
+  human-input stops, tracker status changes, compactions, and pull request creation. The issue page
+  does not render an event log; it shows a card per run with metrics, context, outcome, and the latest
+  Codex output excerpt. Full prompts, reasoning, message bodies, tool arguments, and tool outputs
+  are not persisted.
 - Valid pull request links observed from successful agent operations are attached to the issue and
-  shown on the creation event. A pull request link must use the issue tracker host. Repeated
+  available in the issue summary. A pull request link must use the issue tracker host. Repeated
   observations of the same pull request do not duplicate it.
-- The dashboard presents issue summaries and an issue detail view with totals above a vertical
-  run/event timeline. The issue list can reach older pages. History uses the same HTTP listener and
+- The dashboard presents issue summaries and an issue detail view with totals above ordered run
+  cards. The issue list can reach older pages. History uses the same HTTP listener and
   network access as the live dashboard. The API provides a paginated issue list and an issue detail
   response; it does not return full message content.
 - A storage failure MUST be operator-visible and MUST NOT silently claim that a run was recorded.

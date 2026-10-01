@@ -48,7 +48,11 @@ defmodule SymphonyElixir.HistoryTest do
     assert :ok =
              History.record_update(
                run_id,
-               %{event: :notification, timestamp: time(4), payload: %{"method" => "item/completed", "params" => %{"item" => %{"type" => "agentMessage", "text" => "secret message"}}}},
+               %{
+                 event: :notification,
+                 timestamp: time(4),
+                 payload: %{"method" => "item/completed", "params" => %{"item" => %{"type" => "agentMessage", "text" => "Latest progress update", "debug" => "secret payload"}}}
+               },
                tokens(9, 4, 13),
                ctx.name
              )
@@ -77,16 +81,18 @@ defmodule SymphonyElixir.HistoryTest do
     assert run.reasoning_effort == "high"
     assert run.workflow_revision == "revision-a"
     assert run.stop.reason == "Permission needed"
+    assert run.last_output == %{text: "Latest progress update", at: DateTime.to_iso8601(time(4))}
     assert Enum.any?(run.events, &(&1.type == "agent_message"))
     assert Enum.any?(run.events, &(&1.type == "pull_request_created"))
     refute inspect(detail) =~ "secret reasoning"
-    refute inspect(detail) =~ "secret message"
+    refute inspect(detail) =~ "secret payload"
 
     GenServer.stop(pid)
     {:ok, restarted} = History.start_link(path: ctx.path, name: ctx.name, table: ctx.table)
     assert {:ok, persisted} = History.get_issue("GH-101", ctx.name)
     assert persisted.summary.total_tokens == 13
     assert persisted.summary.human_handoffs == 1
+    assert hd(persisted.runs).last_output == run.last_output
     GenServer.stop(restarted)
   end
 
@@ -270,6 +276,52 @@ defmodule SymphonyElixir.HistoryTest do
     assert second_id != first_id
   end
 
+  test "latest agent output replaces the prior excerpt while other updates leave it intact", ctx do
+    {:ok, _pid} = History.start_link(path: ctx.path, name: ctx.name, table: ctx.table)
+    assert {:ok, run_id} = History.start_run(issue("GH-209"), %{}, ctx.name)
+
+    first = item_notification("agentMessage", "Old output", 1)
+    latest_text = "\e[31m" <> String.duplicate("a", 510) <> "\nmore"
+    latest = item_notification("agentMessage", latest_text, 2)
+    tool = item_notification("commandExecution", "secret tool output", 3)
+
+    stream = %{
+      event: :notification,
+      timestamp: time(4),
+      payload: %{"method" => "item/agentMessage/delta", "params" => %{"delta" => "partial output"}}
+    }
+
+    reasoning = item_notification("reasoning", "secret reasoning", 5)
+
+    assert :ok = History.record_update(run_id, first, tokens(1, 1, 2), ctx.name)
+    assert :ok = History.record_update(run_id, latest, tokens(2, 1, 3), ctx.name)
+    assert :ok = History.record_update(run_id, tool, tokens(3, 1, 4), ctx.name)
+    assert :ok = History.record_update(run_id, stream, tokens(3, 1, 4), ctx.name)
+    assert :ok = History.record_update(run_id, reasoning, tokens(3, 1, 4), ctx.name)
+    assert {:ok, detail} = History.get_issue("GH-209", ctx.name)
+    assert [run] = detail.runs
+    assert run.last_output == %{text: String.duplicate("a", 500), at: DateTime.to_iso8601(time(2))}
+    assert run.message_count == 2
+    refute inspect(detail) =~ "Old output"
+    refute inspect(detail) =~ "secret tool output"
+    refute inspect(detail) =~ "secret reasoning"
+  end
+
+  test "a pre-existing run without a retained output reports it unavailable", ctx do
+    {:ok, pid} = History.start_link(path: ctx.path, name: ctx.name, table: ctx.table)
+    assert {:ok, run_id} = History.start_run(issue("GH-210"), %{}, ctx.name)
+    GenServer.stop(pid)
+
+    {:ok, table} = :dets.open_file(ctx.table, file: String.to_charlist(ctx.path), type: :set)
+    [{{:run, ^run_id}, run}] = :dets.lookup(table, {:run, run_id})
+    :ok = :dets.insert(table, {{:run, run_id}, Map.delete(run, :last_output)})
+    :ok = :dets.close(table)
+
+    {:ok, _pid} = History.start_link(path: ctx.path, name: ctx.name, table: ctx.table)
+    assert {:ok, %{runs: [legacy]}} = History.get_issue("GH-210", ctx.name)
+    assert legacy.last_output == nil
+  end
+
   defp issue(identifier) do
     %{
       id: identifier,
@@ -283,6 +335,14 @@ defmodule SymphonyElixir.HistoryTest do
 
   defp time(seconds), do: DateTime.add(~U[2026-10-01 10:00:00Z], seconds, :second)
   defp tokens(input, output, total), do: %{input_tokens: input, output_tokens: output, total_tokens: total}
+
+  defp item_notification(type, text, seconds) do
+    %{
+      event: :notification,
+      timestamp: time(seconds),
+      payload: %{"method" => "item/completed", "params" => %{"item" => %{"type" => type, "text" => text}}}
+    }
+  end
 end
 
 defmodule SymphonyElixir.HistoryOrchestratorTest do
@@ -438,7 +498,8 @@ defmodule SymphonyElixir.HistoryDispatchTest do
 
     assert {:ok, %{runs: [run]}} = History.get_issue("GH-601", history_name)
     assert is_binary(run.workflow_revision)
-    refute inspect(run) =~ "private"
+    assert run.last_output.text == "private"
+    refute inspect(run.events) =~ "private"
   end
 
   test "an immediately failing worker retains its startup event and reason" do

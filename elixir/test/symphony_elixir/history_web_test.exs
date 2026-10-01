@@ -16,7 +16,7 @@ defmodule SymphonyElixir.HistoryWebTest do
     def handle_call(:snapshot, _from, snapshot), do: {:reply, snapshot, snapshot}
   end
 
-  test "history API and dashboard show issue totals and an event timeline without message bodies" do
+  test "history API and dashboard show issue totals and update the latest run output without an event log" do
     history = String.to_atom("history_web_#{System.unique_integer([:positive])}")
     table = String.to_atom("history_web_table_#{System.unique_integer([:positive])}")
     path = Path.join(System.tmp_dir!(), "symphony-history-web-#{System.unique_integer([:positive])}.dets")
@@ -49,7 +49,7 @@ defmodule SymphonyElixir.HistoryWebTest do
                %{
                  event: :notification,
                  timestamp: DateTime.utc_now(),
-                 payload: %{"method" => "item/completed", "params" => %{"item" => %{"type" => "agentMessage", "text" => "private message body"}}}
+                 payload: %{"method" => "item/completed", "params" => %{"item" => %{"type" => "agentMessage", "text" => "Reviewing dictation workflow", "debug" => "private message body"}}}
                },
                completed_tokens,
                history
@@ -89,17 +89,20 @@ defmodule SymphonyElixir.HistoryWebTest do
     assert hd(detail["runs"])["tokens"]["cached_input_tokens"] == 80
     assert hd(detail["runs"])["tokens"]["uncached_input_tokens"] == 20
     assert hd(detail["runs"])["compaction_count"] == 1
+    assert hd(detail["runs"])["last_output"]["text"] == "Reviewing dictation workflow"
     assert length(detail["runs"]) == 1
     refute inspect(detail) =~ "private message body"
 
-    {:ok, _view, html} = live(build_conn(), "/history/GH-301")
+    {:ok, view, html} = live(build_conn(), "/history/GH-301")
     assert html =~ "Improve dictation"
-    assert html =~ "Timeline"
+    assert html =~ "Latest Codex output"
+    assert html =~ "Reviewing dictation workflow"
+    refute html =~ "Codex message completed"
+    refute html =~ "Timeline"
     assert html =~ "Cached input"
     assert html =~ "Non-cached input"
     assert html =~ "Total processed tokens"
     assert html =~ "Context compactions"
-    assert html =~ "Context compacted"
     assert html =~ "1 compaction</span>"
     assert html =~ "Cached input is included in the total."
     assert html =~ "103"
@@ -107,6 +110,21 @@ defmodule SymphonyElixir.HistoryWebTest do
 
     assert {:ok, older_run} = History.start_run(issue, %{}, history)
     older_tokens = %{input_tokens: 40, output_tokens: 2, total_tokens: 42}
+
+    assert :ok =
+             History.record_update(
+               older_run,
+               %{
+                 event: :notification,
+                 timestamp: DateTime.utc_now(),
+                 payload: %{"method" => "item/completed", "params" => %{"item" => %{"type" => "agentMessage", "text" => "New run is checking tests"}}}
+               },
+               older_tokens,
+               history
+             )
+
+    SymphonyElixirWeb.ObservabilityPubSub.broadcast_update()
+    assert render(view) =~ "New run is checking tests"
     assert :ok = History.finish_run(older_run, :completed, %{tokens: older_tokens}, history)
     mixed = get(build_conn(), "/api/v1/history/GH-301") |> json_response(200)
     assert mixed["summary"]["cached_input_tokens"] == nil

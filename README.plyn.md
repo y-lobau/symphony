@@ -83,7 +83,8 @@ network interfaces. Issue history is at `/history` on the same host and port;
 it begins with runs started after this feature is deployed and is retained in
 `var/logs/history/history.dets`. The issue list pages older work, and each
 issue page includes processed-token totals with cached/non-cached input, completed context
-compactions, PR links, run context, and an observed event timeline.
+compactions, PR links, run context, and the latest Codex output excerpt per run. Connected
+pages update the excerpt as new Codex messages complete.
 To stop the service, run
 `launchctl bootout gui/$(id -u)/ai.openclaw.symphony.plyn`; to load it again,
 run `launchctl bootstrap gui/$(id -u)

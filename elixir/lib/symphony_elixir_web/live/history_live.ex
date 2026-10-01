@@ -37,7 +37,7 @@ defmodule SymphonyElixirWeb.HistoryLive do
         <p class="eyebrow">Symphony Observability</p>
         <h1 class="hero-title"><%= if @identifier, do: "Issue history", else: "Session history" %></h1>
         <p class="hero-copy">
-          Runs and observable events from the time history recording was enabled.
+          Run metrics and the latest Codex output from the time history recording was enabled.
         </p>
         <nav class="history-nav" aria-label="Dashboard navigation">
           <a href="/">Live dashboard</a>
@@ -109,7 +109,7 @@ defmodule SymphonyElixirWeb.HistoryLive do
           </section>
 
           <section class="section-card">
-            <div class="section-header"><div><h2 class="section-title">Timeline</h2><p class="section-copy">Observed runs and events, oldest first</p></div></div>
+            <div class="section-header"><div><h2 class="section-title">Runs</h2><p class="section-copy">Latest Codex output from each run, oldest first</p></div></div>
             <div class="history-timeline">
               <article :for={{run, index} <- Enum.with_index(runs, 1)} class="history-run">
                 <div class="history-rail" aria-hidden="true"><span class="history-run-dot"></span><span class="history-rail-line"></span></div>
@@ -128,16 +128,14 @@ defmodule SymphonyElixirWeb.HistoryLive do
                     <span><%= run.turn_count %> turns</span>
                   </div>
                   <p class="history-run-context muted">Workflow <%= run.workflow_revision || "unknown" %> · Model <%= run.model || "unknown" %> · Reasoning <%= run.reasoning_effort || "unknown" %></p>
-                  <div class="history-events">
-                    <div :for={event <- run.events} class="history-event">
-                      <time class="history-event-time mono" datetime={event.at}><%= event.at %></time>
-                      <span class="history-event-marker" aria-hidden="true"></span>
-                      <div class="history-event-content">
-                        <strong><%= event.label %></strong>
-                        <p :if={event.detail}><%= event.detail %></p>
-                        <a :if={event.url} href={event.url} target="_blank" rel="noopener noreferrer">Open pull request ↗</a>
-                      </div>
-                    </div>
+                  <div class="history-run-output">
+                    <p class="history-run-output-label">Latest Codex output</p>
+                    <%= if run.last_output do %>
+                      <p class="history-run-output-text"><%= run.last_output.text %></p>
+                      <time class="history-run-output-time mono" datetime={run.last_output.at}><%= run.last_output.at %></time>
+                    <% else %>
+                      <p class="muted"><%= if run.message_count > 0, do: "Latest output unavailable for this earlier run.", else: "No Codex output captured for this run." %></p>
+                    <% end %>
                   </div>
                 </div>
               </article>

@@ -305,7 +305,7 @@ codex:
 
 The observability UI now runs on a minimal Phoenix stack:
 
-- LiveView for the dashboard at `/`, issue history at `/history`, and issue timelines at `/history/<issue_identifier>`
+- LiveView for the dashboard at `/`, issue history at `/history`, and issue runs at `/history/<issue_identifier>`
 - JSON API for operational debugging under `/api/v1/*`, including paginated `/api/v1/history?limit=20&offset=0` and `/api/v1/history/<issue_identifier>`
 - Bandit as the HTTP server
 - Phoenix dependency static assets for the LiveView client bootstrap
@@ -314,9 +314,11 @@ The observability UI now runs on a minimal Phoenix stack:
 History starts recording when this version first runs; it does not reconstruct older sessions.
 Issue pages show active and past runs, total processed tokens with cached and non-cached input,
 active runtime, completed Codex messages, completed context compactions, human handoffs, outcomes,
-model and reasoning effort, PR links, and observed events. Cached input is included in the total;
-older runs without a retained cache or compaction count show unknown values. They do not retain
-message bodies, reasoning, or tool payloads.
+model and reasoning effort, PR links, and each run's latest completed Codex output excerpt.
+The issue page omits the event log and updates each excerpt when a new Codex message completes.
+Cached input is included in the total; older runs without a retained cache or compaction count
+show unknown values. History keeps one normalized output excerpt per run (up to 500 characters),
+not full messages, reasoning, or tool payloads.
 Records are retained until the history
 file is removed. The store is `history/history.dets` under `--logs-root`, or `var/history/history.dets`
 beside the workflow file when that flag is absent. Keep this file across service upgrades.

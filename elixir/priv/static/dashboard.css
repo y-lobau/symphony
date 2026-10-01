@@ -188,21 +188,13 @@ pre,
 .history-run-heading h3 { margin: 0.25rem 0 0.6rem; }
 .history-run-heading time { color: var(--muted); font-size: 0.82rem; }
 .history-run-context { margin: 0.6rem 0 1rem; font-size: 0.84rem; overflow-wrap: anywhere; }
-.history-events { display: grid; }
-.history-event { display: grid; grid-template-columns: 12rem 1rem minmax(0, 1fr); gap: 0.6rem; align-items: start; padding: 0.55rem 0; }
-.history-event-time { color: var(--muted); font-size: 0.78rem; }
-.history-event-marker { width: 0.42rem; height: 0.42rem; margin: 0.5rem auto 0; border-radius: 50%; background: var(--line-strong); }
-.history-event-content { min-width: 0; overflow-wrap: anywhere; }
-.history-event-content strong { font-size: 0.9rem; }
-.history-event-content p { margin: 0.15rem 0; color: var(--muted); font-size: 0.84rem; }
-.history-event-content a { display: inline-block; margin-top: 0.2rem; color: var(--accent-ink); font-weight: 600; font-size: 0.83rem; }
+.history-run-output { border: 1px solid var(--line); border-radius: 16px; background: var(--page-soft); padding: 0.85rem 1rem; }
+.history-run-output-label { margin: 0 0 0.35rem; color: var(--muted); font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+.history-run-output-text { margin: 0 0 0.35rem; white-space: normal; overflow-wrap: anywhere; }
+.history-run-output-time { color: var(--muted); font-size: 0.76rem; }
 
 @media (max-width: 700px) {
   .history-run-heading { display: block; }
-  .history-event { grid-template-columns: 1rem minmax(0, 1fr); }
-  .history-event-time { grid-column: 2; }
-  .history-event-marker { grid-column: 1; grid-row: 1 / span 2; }
-  .history-event-content { grid-column: 2; }
 }
 
 .hero-card,
