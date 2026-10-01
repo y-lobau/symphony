@@ -170,7 +170,9 @@ Notes:
   `networkAccess: true` in `codex.turn_sandbox_policy`; otherwise DNS/network access may be denied
   by the Codex turn sandbox.
 - `agent.max_turns` caps how many back-to-back Codex turns Symphony will run in a single agent
-  invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
+  invocation when a turn completes normally but the issue is still in an active state. For a
+  Project-gated workflow, continuation also requires an eligible working Project Status; moving
+  the issue to `In review` or `Human in the Loop` ends the run. Default: `20`.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
 - Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run
@@ -266,7 +268,8 @@ codex:
   options that may start new runs. The required label remains a standing opt-in. Symphony assigns
   the issue and sets Project Status to `In progress` at dispatch. An input-required event sets the
   status to `Human in the Loop` and blocks the run; a human comment plus moving the Project Status
-  to an allowed dispatch status starts a fresh run. A Project Status lookup failure prevents dispatch.
+  to an allowed dispatch status starts a fresh run. An independently resolved handoff can resume
+  the same way. A Project Status lookup failure prevents dispatch or turn continuation.
   This requires organization Projects read/write and repository Issues write permissions on the
   installed GitHub App.
 

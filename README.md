@@ -6,6 +6,7 @@ work instead of supervising coding agents.
 The Plyn GitHub profile can use a Projects v2 Status field as its dispatch gate. With the
 `ready-for-agent` label in place, moving an issue to **Ready** or **Backlog** starts a run;
 **Human in the Loop** pauses the run until the requested input arrives or the blocker is resolved independently and the issue is moved back to an eligible status.
+Moving the issue to **In review** after opening a pull request ends the current run without another Codex turn.
 The Elixir dashboard also records new runs under each issue, with token and runtime totals,
 human handoffs, PR links, and a chronological event timeline for workflow review.
 

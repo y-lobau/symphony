@@ -176,7 +176,8 @@ defmodule SymphonyElixir.AgentRunner do
   defp continue_with_issue?(%Issue{id: issue_id} = issue, issue_state_fetcher) when is_binary(issue_id) do
     case issue_state_fetcher.([issue_id]) do
       {:ok, [%Issue{} = refreshed_issue | _]} ->
-        if active_issue_state?(refreshed_issue.state) and issue_routable?(refreshed_issue) do
+        if active_issue_state?(refreshed_issue.state) and issue_routable?(refreshed_issue) and
+             project_status_allows_continuation?(refreshed_issue) do
           {:continue, refreshed_issue}
         else
           {:done, refreshed_issue}
@@ -203,6 +204,17 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp issue_routable?(%Issue{} = issue) do
     Issue.routable?(issue, Config.settings!().tracker.required_labels)
+  end
+
+  defp project_status_allows_continuation?(%Issue{project_status: status}) do
+    case Config.settings!().tracker.provider["dispatch_statuses"] do
+      statuses when is_list(statuses) and statuses != [] ->
+        is_binary(status) and
+          Enum.any?(["In progress" | statuses], &(normalize_issue_state(&1) == normalize_issue_state(status)))
+
+      _ ->
+        true
+    end
   end
 
   defp selected_worker_host(nil, []), do: nil

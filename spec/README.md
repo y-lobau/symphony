@@ -30,10 +30,15 @@ For issues in the **Plyn Release** GitHub Project, Symphony assigns the issue to
 `y-lobau` and sets its Project Status to **In progress** when a run starts. If
 Codex requests human input, Symphony ends that run, sets the Project Status to
 **Human in the Loop**, and blocks the issue. After the human replies in an
-issue comment and moves the Project Status to **Ready** or **Backlog**,
-Symphony starts a fresh run and sets the Project Status to **In progress**.
+issue comment, or the requested action is resolved by independently verified
+automation, moving the Project Status to **Ready** or **Backlog** starts a fresh
+run and sets the Project Status to **In progress**.
 The agent is instructed to read the issue's latest comments before continuing.
-When the agent opens a pull request, it moves the issue to **In review**.
+After each completed turn, Symphony continues that run only while the issue
+remains open, opted in, and in **In progress**, **Ready**, or **Backlog**.
+When the agent opens a pull request and moves the issue to **In review**,
+Symphony ends the run without starting another turn. A move to **Human in the
+Loop** or another non-working Project Status also ends continuation.
 
 Project updates use the GitHub App's organization Projects permission. A failed
 Project Status read prevents dispatch until the status can be confirmed.

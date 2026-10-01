@@ -1059,6 +1059,40 @@ defmodule SymphonyElixir.CoreTest do
              AgentRunner.continue_with_issue_for_test(issue, fetcher)
   end
 
+  test "agent runner stops when a project status leaves working states" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_required_labels: ["ready-for-agent"],
+      tracker_provider: %{"dispatch_statuses" => ["Ready", "Backlog"]}
+    )
+
+    issue = %Issue{
+      id: "issue-project-continuation",
+      identifier: "GH-176",
+      title: "Stop at review",
+      state: "In Progress",
+      labels: ["ready-for-agent"],
+      project_status: "In progress",
+      dispatchable: true
+    }
+
+    for status <- ["In review", "Human in the Loop", "Done", nil] do
+      refreshed_issue = %{issue | project_status: status}
+      fetcher = fn [_issue_id] -> {:ok, [refreshed_issue]} end
+      assert {:done, ^refreshed_issue} = AgentRunner.continue_with_issue_for_test(issue, fetcher)
+    end
+
+    for status <- ["In progress", "Ready", "Backlog"] do
+      refreshed_issue = %{issue | project_status: status}
+      fetcher = fn [_issue_id] -> {:ok, [refreshed_issue]} end
+      assert {:continue, ^refreshed_issue} = AgentRunner.continue_with_issue_for_test(issue, fetcher)
+    end
+
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_required_labels: ["ready-for-agent"])
+    refreshed_issue = %{issue | project_status: "In review"}
+    fetcher = fn [_issue_id] -> {:ok, [refreshed_issue]} end
+    assert {:continue, ^refreshed_issue} = AgentRunner.continue_with_issue_for_test(issue, fetcher)
+  end
+
   test "normal worker exit schedules active-state continuation retry" do
     issue_id = "issue-resume"
     ref = make_ref()
