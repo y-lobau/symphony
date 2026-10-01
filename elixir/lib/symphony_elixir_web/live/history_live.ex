@@ -74,6 +74,7 @@ defmodule SymphonyElixirWeb.HistoryLive do
                     <span><strong><%= format_int(issue.total_tokens) %></strong> processed tokens (<%= format_optional_int(issue.cached_input_tokens) %> cached input)</span>
                     <span><strong><%= format_duration(issue.duration_seconds) %></strong> runtime</span>
                     <span><strong><%= issue.message_count %></strong> messages</span>
+                    <span><strong><%= format_optional_int(issue.compaction_count) %></strong> compactions</span>
                     <span><strong><%= issue.human_handoffs %></strong> human handoffs</span>
                   </div>
                 </a>
@@ -103,6 +104,7 @@ defmodule SymphonyElixirWeb.HistoryLive do
             <article class="metric-card"><p class="metric-label">Total processed tokens</p><p class="metric-value numeric"><%= format_int(summary.total_tokens) %></p><p class="metric-detail numeric">Input <%= format_int(summary.input_tokens) %> · Output <%= format_int(summary.output_tokens) %></p><p class="metric-detail numeric">Cached input <%= format_optional_int(summary.cached_input_tokens) %> · Non-cached input <%= format_optional_int(summary.uncached_input_tokens) %></p><p class="metric-detail">Cached input is included in the total.</p></article>
             <article class="metric-card"><p class="metric-label">Active runtime</p><p class="metric-value numeric"><%= format_duration(summary.duration_seconds) %></p><p class="metric-detail">Across <%= summary.run_count %> runs</p></article>
             <article class="metric-card"><p class="metric-label">Codex messages</p><p class="metric-value numeric"><%= summary.message_count %></p><p class="metric-detail">Completed progress and final messages</p></article>
+            <article class="metric-card"><p class="metric-label">Context compactions</p><p class="metric-value numeric"><%= format_optional_int(summary.compaction_count) %></p><p class="metric-detail">Completed Codex compaction events</p></article>
             <article class="metric-card"><p class="metric-label">Human handoffs</p><p class="metric-value numeric"><%= summary.human_handoffs %></p><p class="metric-detail">Runs stopped for human input</p></article>
           </section>
 
@@ -122,6 +124,7 @@ defmodule SymphonyElixirWeb.HistoryLive do
                     <span>Non-cached input <%= format_optional_int(run.tokens.uncached_input_tokens) %></span>
                     <span><%= format_duration(run.duration_seconds) %></span>
                     <span><%= run.message_count %> messages</span>
+                    <span><%= format_optional_int(run.compaction_count) %> compactions</span>
                     <span><%= run.turn_count %> turns</span>
                   </div>
                   <p class="history-run-context muted">Workflow <%= run.workflow_revision || "unknown" %> · Model <%= run.model || "unknown" %> · Reasoning <%= run.reasoning_effort || "unknown" %></p>

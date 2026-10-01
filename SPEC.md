@@ -1654,13 +1654,14 @@ from logs. Records survive service restarts and are retained without an automati
   human reply belongs to the same issue.
 - An issue summary shows its latest observed tracker status and observation time, pull request links,
   aggregate input/output/total tokens, cached input and non-cached input, active worker runtime,
-  completed agent-message count, human input handoff count, and latest run outcome. Live scheduler
+  completed agent-message count, completed context-compaction count, human input handoff count,
+  and latest run outcome. Live scheduler
   status takes precedence while an issue
   is running, retrying, or blocked. A tracker refresh updates older issue statuses without creating
   another run; a failed refresh leaves the last observation visibly dated.
 - Each run records its start/end, outcome (`completed`, `human_input`, `failed`, `cancelled`, or
   `interrupted`), token counts including cached input when reported by the coding agent, active
-  runtime, agent-message count, and the workflow revision, coding-agent model, and reasoning effort
+  runtime, agent-message count, completed context-compaction count, and the workflow revision, coding-agent model, and reasoning effort
   actually used. Unknown model or effort is displayed as
   unknown rather than inferred. An open run's runtime increases while it executes. A run still open
   when the service restarts is marked interrupted.
@@ -1674,6 +1675,10 @@ from logs. Records survive service restarts and are retained without an automati
   message. Streaming deltas, reasoning, tool calls, and protocol notifications do not add to this
   count. Count each human-input stop once; keep its timestamp, signal, and available short reason as
   a structured stop record without assigning a fixed reason category.
+- Count a context compaction only when the coding-agent protocol reports a completed compaction
+  item. Show its timestamp on the timeline. Do not infer compactions from token volume, context
+  size, or turn boundaries. Runs recorded before compaction tracking have an unknown count unless
+  reliable event evidence is available; an issue total is unknown if any run's count is unknown.
 - The timeline is chronological and shows observed run/turn boundaries, completed agent messages,
   retries, errors, human-input stops, tracker status changes, and pull request creation. Events use
   short descriptions and a safe cause for a failed run when one is known, including failures before

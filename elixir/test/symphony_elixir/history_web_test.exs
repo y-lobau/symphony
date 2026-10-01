@@ -56,6 +56,18 @@ defmodule SymphonyElixir.HistoryWebTest do
              )
 
     assert :ok =
+             History.record_update(
+               run_id,
+               %{
+                 event: :notification,
+                 timestamp: DateTime.utc_now(),
+                 payload: %{"method" => "item/completed", "params" => %{"item" => %{"id" => "compact-301", "type" => "contextCompaction"}}}
+               },
+               completed_tokens,
+               history
+             )
+
+    assert :ok =
              History.finish_run(
                run_id,
                :completed,
@@ -67,13 +79,16 @@ defmodule SymphonyElixir.HistoryWebTest do
     assert list["total"] == 1
     assert hd(list["issues"])["identifier"] == "GH-301"
     assert hd(list["issues"])["cached_input_tokens"] == 80
+    assert hd(list["issues"])["compaction_count"] == 1
 
     detail = get(build_conn(), "/api/v1/history/GH-301") |> json_response(200)
     assert detail["summary"]["total_tokens"] == 103
     assert detail["summary"]["cached_input_tokens"] == 80
     assert detail["summary"]["uncached_input_tokens"] == 20
+    assert detail["summary"]["compaction_count"] == 1
     assert hd(detail["runs"])["tokens"]["cached_input_tokens"] == 80
     assert hd(detail["runs"])["tokens"]["uncached_input_tokens"] == 20
+    assert hd(detail["runs"])["compaction_count"] == 1
     assert length(detail["runs"]) == 1
     refute inspect(detail) =~ "private message body"
 
@@ -83,6 +98,8 @@ defmodule SymphonyElixir.HistoryWebTest do
     assert html =~ "Cached input"
     assert html =~ "Non-cached input"
     assert html =~ "Total processed tokens"
+    assert html =~ "Context compactions"
+    assert html =~ "Context compacted"
     assert html =~ "Cached input is included in the total."
     assert html =~ "103"
     refute html =~ "private message body"
@@ -93,6 +110,7 @@ defmodule SymphonyElixir.HistoryWebTest do
     mixed = get(build_conn(), "/api/v1/history/GH-301") |> json_response(200)
     assert mixed["summary"]["cached_input_tokens"] == nil
     assert mixed["summary"]["uncached_input_tokens"] == nil
+    assert mixed["summary"]["compaction_count"] == 1
     {:ok, _view, mixed_html} = live(build_conn(), "/history/GH-301")
     assert mixed_html =~ "Cached input Unknown"
     assert mixed_html =~ "Non-cached input Unknown"

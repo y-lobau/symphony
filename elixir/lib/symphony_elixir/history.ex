@@ -105,6 +105,7 @@ defmodule SymphonyElixir.History do
       duration_seconds: 0,
       tokens: zero_tokens(),
       message_count: 0,
+      compaction_count: 0,
       turn_count: 0,
       session_ids: [],
       workflow_revision: value(context, :workflow_revision),
@@ -254,7 +255,14 @@ defmodule SymphonyElixir.History do
         {:reply, {:error, :issue_not_found}, state}
 
       issue ->
-        runs = issue.run_ids |> Enum.map(&lookup_run(state.table, &1)) |> Enum.flat_map(&unwrap_run/1) |> Enum.map(&with_current_duration/1) |> Enum.map(&with_token_breakdown/1)
+        runs =
+          issue.run_ids
+          |> Enum.map(&lookup_run(state.table, &1))
+          |> Enum.flat_map(&unwrap_run/1)
+          |> Enum.map(&with_current_duration/1)
+          |> Enum.map(&with_token_breakdown/1)
+          |> Enum.map(&with_compaction_count/1)
+
         {:reply, {:ok, %{summary: summary(state.table, issue), runs: runs}}, state}
     end
   end
@@ -400,6 +408,7 @@ defmodule SymphonyElixir.History do
       total_tokens: Enum.sum(Enum.map(runs, & &1.tokens.total_tokens)),
       duration_seconds: Enum.sum(Enum.map(runs, & &1.duration_seconds)),
       message_count: Enum.sum(Enum.map(runs, & &1.message_count)),
+      compaction_count: aggregate_compactions(runs),
       human_handoffs: Enum.count(runs, &(&1.outcome == "human_input")),
       outcome: latest && latest.outcome
     }
@@ -420,7 +429,7 @@ defmodule SymphonyElixir.History do
         %{run | events: run.events ++ [event(at, Atom.to_string(event_name), event_label(event_name), failure_detail(update))]}
 
       :notification ->
-        record_completed_message(run, update, at)
+        run |> record_completed_message(update, at) |> record_completed_compaction(update, at)
 
       _ ->
         run
@@ -450,6 +459,21 @@ defmodule SymphonyElixir.History do
     method = value(payload, :method)
     item = value(value(payload, :params), :item)
     method == "item/completed" and value(item, :type) in ["agentMessage", "agent_message"]
+  end
+
+  defp record_completed_compaction(run, update, at) do
+    payload = value(update, :payload) || value(value(update, :message), :payload)
+    item = value(value(payload, :params), :item)
+    id = value(item, :id)
+
+    if value(payload, :method) == "item/completed" and value(item, :type) == "contextCompaction" and
+         is_binary(id) and not Enum.any?(run.events, &(Map.get(&1, :source_id) == id and &1.type == "context_compaction")) do
+      marker = event(at, "context_compaction", "Context compacted") |> Map.put(:source_id, id)
+      count = Map.get(run, :compaction_count)
+      Map.merge(run, %{compaction_count: if(is_integer(count), do: count + 1, else: nil), events: run.events ++ [marker]})
+    else
+      run
+    end
   end
 
   defp maybe_set_model(run, update) do
@@ -486,6 +510,14 @@ defmodule SymphonyElixir.History do
   defp with_token_breakdown(run) do
     cached = Map.get(run.tokens, :cached_input_tokens)
     %{run | tokens: run.tokens |> Map.put(:cached_input_tokens, cached) |> Map.put(:uncached_input_tokens, uncached_input(run.tokens.input_tokens, cached))}
+  end
+
+  defp with_compaction_count(run), do: Map.put_new(run, :compaction_count, nil)
+
+  defp aggregate_compactions(runs) do
+    if Enum.all?(runs, &is_integer(Map.get(&1, :compaction_count))) do
+      Enum.sum(Enum.map(runs, & &1.compaction_count))
+    end
   end
 
   defp aggregate_cached_input(runs) do

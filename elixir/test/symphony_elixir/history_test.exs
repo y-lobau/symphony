@@ -205,6 +205,71 @@ defmodule SymphonyElixir.HistoryTest do
     assert List.last(mixed.runs).tokens.uncached_input_tokens == nil
   end
 
+  test "counts completed context compactions once and records timeline markers", ctx do
+    {:ok, _pid} = History.start_link(path: ctx.path, name: ctx.name, table: ctx.table)
+    assert {:ok, first_id} = History.start_run(issue("GH-207"), %{}, ctx.name)
+
+    started = %{event: :notification, timestamp: time(1), payload: %{"method" => "item/started", "params" => %{"item" => %{"id" => "compact-1", "type" => "contextCompaction"}}}}
+
+    completed = %{
+      event: :notification,
+      timestamp: time(2),
+      payload: %{"method" => "item/completed", "params" => %{"item" => %{"id" => "compact-1", "type" => "contextCompaction", "text" => "private context"}}}
+    }
+
+    assert :ok = History.record_update(first_id, started, tokens(10, 1, 11), ctx.name)
+    assert :ok = History.record_update(first_id, completed, tokens(10, 1, 11), ctx.name)
+    assert :ok = History.record_update(first_id, completed, tokens(10, 1, 11), ctx.name)
+
+    assert {:ok, first} = History.get_issue("GH-207", ctx.name)
+    assert first.summary.compaction_count == 1
+    assert hd(first.runs).compaction_count == 1
+    assert hd(first.runs).message_count == 0
+    assert Enum.count(hd(first.runs).events, &(&1.type == "context_compaction")) == 1
+    refute inspect(first) =~ "private context"
+
+    assert {:ok, second_id} = History.start_run(issue("GH-207"), %{}, ctx.name)
+
+    assert :ok =
+             History.record_update(
+               second_id,
+               %{completed | timestamp: time(3), payload: %{"method" => "item/completed", "params" => %{"item" => %{"id" => "compact-2", "type" => "contextCompaction"}}}},
+               tokens(20, 1, 21),
+               ctx.name
+             )
+
+    assert {:ok, both} = History.get_issue("GH-207", ctx.name)
+    assert both.summary.compaction_count == 2
+    assert Enum.map(both.runs, & &1.compaction_count) == [1, 1]
+  end
+
+  test "legacy runs without compaction tracking remain unknown", ctx do
+    {:ok, pid} = History.start_link(path: ctx.path, name: ctx.name, table: ctx.table)
+    assert {:ok, first_id} = History.start_run(issue("GH-208"), %{}, ctx.name)
+    GenServer.stop(pid)
+
+    {:ok, table} = :dets.open_file(ctx.table, file: String.to_charlist(ctx.path), type: :set)
+    [{{:run, ^first_id}, run}] = :dets.lookup(table, {:run, first_id})
+    :ok = :dets.insert(table, {{:run, first_id}, Map.delete(run, :compaction_count)})
+    :ok = :dets.close(table)
+
+    {:ok, _pid} = History.start_link(path: ctx.path, name: ctx.name, table: ctx.table)
+
+    assert :ok =
+             History.record_update(
+               first_id,
+               %{event: :notification, timestamp: time(2), payload: %{"method" => "item/completed", "params" => %{"item" => %{"id" => "late-compaction", "type" => "contextCompaction"}}}},
+               tokens(0, 0, 0),
+               ctx.name
+             )
+
+    assert {:ok, second_id} = History.start_run(issue("GH-208"), %{}, ctx.name)
+    assert {:ok, detail} = History.get_issue("GH-208", ctx.name)
+    assert Enum.map(detail.runs, & &1.compaction_count) == [nil, 0]
+    assert detail.summary.compaction_count == nil
+    assert second_id != first_id
+  end
+
   defp issue(identifier) do
     %{
       id: identifier,
