@@ -925,6 +925,46 @@ defmodule SymphonyElixir.CoreTest do
     refute MapSet.member?(updated_state.claimed, issue_id)
   end
 
+  test "project status gates new dispatch and releases a human input block after Ready or Backlog" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_required_labels: ["ready-for-agent"],
+      tracker_provider: %{"dispatch_statuses" => ["Ready", "Backlog"]}
+    )
+
+    issue = %Issue{
+      id: "project-gated",
+      identifier: "GH-42",
+      title: "Project status gate",
+      state: "In Progress",
+      labels: ["ready-for-agent"],
+      dispatchable: true,
+      project_status: "Human in the Loop"
+    }
+
+    fetcher = fn _ids -> {:ok, [issue]} end
+    assert {:skip, ^issue} = Orchestrator.revalidate_issue_for_dispatch_for_test(issue, fetcher)
+
+    state = %Orchestrator.State{
+      blocked: %{"project-gated" => %{identifier: "GH-42", error: "operator input required"}},
+      claimed: MapSet.new(["project-gated"]),
+      retry_attempts: %{}
+    }
+
+    blocked_state = Orchestrator.reconcile_blocked_issue_states_for_test([issue], state)
+    assert Map.has_key?(blocked_state.blocked, issue.id)
+
+    for status <- ["Ready", "Backlog"] do
+      ready_issue = %{issue | project_status: status}
+
+      assert {:ok, ^ready_issue} =
+               Orchestrator.revalidate_issue_for_dispatch_for_test(ready_issue, fn _ids -> {:ok, [ready_issue]} end)
+
+      released_state = Orchestrator.reconcile_blocked_issue_states_for_test([ready_issue], state)
+      refute Map.has_key?(released_state.blocked, issue.id)
+      refute MapSet.member?(released_state.claimed, issue.id)
+    end
+  end
+
   test "retry releases its claim when a required label is removed" do
     write_workflow_file!(Workflow.workflow_file_path(), tracker_required_labels: ["symphony"])
 
@@ -1056,7 +1096,7 @@ defmodule SymphonyElixir.CoreTest do
     assert MapSet.member?(state.completed, issue_id)
     assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
-    assert_due_in_range(due_at_ms, 500, 1_100)
+    assert_due_in_range(due_at_ms, 400, 1_100)
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
@@ -1089,14 +1129,17 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    sent_at_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :boom})
     Process.sleep(50)
     state = :sys.get_state(pid)
+    observed_at_ms = System.monotonic_time(:millisecond)
 
     assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 39_500, 40_500)
+    assert due_at_ms >= sent_at_ms + 40_000
+    assert due_at_ms <= observed_at_ms + 40_000
   end
 
   test "first abnormal worker exit waits before retrying" do

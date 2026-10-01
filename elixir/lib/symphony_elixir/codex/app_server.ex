@@ -19,6 +19,8 @@ defmodule SymphonyElixir.Codex.AppServer do
           thread_sandbox: String.t(),
           turn_sandbox_policy: map(),
           thread_id: String.t(),
+          model: String.t() | nil,
+          reasoning_effort: String.t() | nil,
           workspace: Path.t(),
           worker_host: String.t() | nil,
           dynamic_tool_binding: map()
@@ -45,7 +47,7 @@ defmodule SymphonyElixir.Codex.AppServer do
       metadata = port_metadata(port, worker_host)
 
       with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host),
-           {:ok, thread_id} <-
+           {:ok, thread_context} <-
              do_start_session(port, expanded_workspace, session_policies, dynamic_tool_binding) do
         {:ok,
          %{
@@ -55,7 +57,9 @@ defmodule SymphonyElixir.Codex.AppServer do
            auto_approve_requests: session_policies.approval_policy == "never",
            thread_sandbox: session_policies.thread_sandbox,
            turn_sandbox_policy: session_policies.turn_sandbox_policy,
-           thread_id: thread_id,
+           thread_id: thread_context.thread_id,
+           model: thread_context.model,
+           reasoning_effort: thread_context.reasoning_effort,
            workspace: expanded_workspace,
            worker_host: worker_host,
            dynamic_tool_binding: dynamic_tool_binding
@@ -77,6 +81,8 @@ defmodule SymphonyElixir.Codex.AppServer do
           auto_approve_requests: auto_approve_requests,
           turn_sandbox_policy: turn_sandbox_policy,
           thread_id: thread_id,
+          model: model,
+          reasoning_effort: reasoning_effort,
           workspace: workspace,
           dynamic_tool_binding: dynamic_tool_binding
         },
@@ -102,7 +108,9 @@ defmodule SymphonyElixir.Codex.AppServer do
           %{
             session_id: session_id,
             thread_id: thread_id,
-            turn_id: turn_id
+            turn_id: turn_id,
+            model: model,
+            reasoning_effort: reasoning_effort
           },
           metadata
         )
@@ -329,10 +337,18 @@ defmodule SymphonyElixir.Codex.AppServer do
     })
 
     case await_response(port, @thread_start_id) do
-      {:ok, %{"thread" => thread_payload}} ->
+      {:ok, %{"thread" => thread_payload} = result} ->
         case thread_payload do
-          %{"id" => thread_id} -> {:ok, thread_id}
-          _ -> {:error, {:invalid_thread_payload, thread_payload}}
+          %{"id" => thread_id} ->
+            {:ok,
+             %{
+               thread_id: thread_id,
+               model: Map.get(result, "model"),
+               reasoning_effort: Map.get(result, "reasoningEffort")
+             }}
+
+          _ ->
+            {:error, {:invalid_thread_payload, thread_payload}}
         end
 
       other ->
@@ -615,6 +631,7 @@ defmodule SymphonyElixir.Codex.AppServer do
       end
 
     emit_message(on_message, event, %{payload: payload, raw: payload_string}, metadata)
+    maybe_emit_pull_request_created(on_message, tool_name, arguments, result, metadata)
 
     :approved
   end
@@ -757,6 +774,25 @@ defmodule SymphonyElixir.Codex.AppServer do
       }
     ]
   end
+
+  defp maybe_emit_pull_request_created(on_message, "github_api", arguments, result, metadata)
+       when is_map(arguments) and is_map(result) do
+    method = Map.get(arguments, "method") || Map.get(arguments, :method)
+    path = Map.get(arguments, "path") || Map.get(arguments, :path)
+
+    if method == "POST" and is_binary(path) and String.match?(path, ~r{^/repos/[^/]+/[^/]+/pulls/?$}) and
+         Map.get(result, "success") == true do
+      with output when is_binary(output) <- Map.get(result, "output"),
+           {:ok, %{"body" => %{"html_url" => url}}} <- Jason.decode(output),
+           true <- is_binary(url) do
+        emit_message(on_message, :pull_request_created, %{url: url}, metadata)
+      else
+        _ -> :ok
+      end
+    end
+  end
+
+  defp maybe_emit_pull_request_created(_on_message, _tool, _arguments, _result, _metadata), do: :ok
 
   defp approve_or_require(
          port,

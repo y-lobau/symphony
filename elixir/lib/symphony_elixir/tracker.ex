@@ -25,10 +25,14 @@ defmodule SymphonyElixir.Tracker do
   @callback execute_agent_tool(String.t(), term(), keyword()) :: map()
   @callback secret_environment_names(map()) :: [String.t()]
   @callback validate_config(map()) :: :ok | {:error, term()}
+  @callback on_issue_started(Issue.t()) :: :ok | {:error, term()}
+  @callback on_issue_input_required(Issue.t()) :: :ok | {:error, term()}
 
   @optional_callbacks agent_tool_specs: 0,
                       execute_agent_tool: 3,
-                      validate_config: 1
+                      validate_config: 1,
+                      on_issue_started: 1,
+                      on_issue_input_required: 1
 
   @spec fetch_issues_by_states([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_issues_by_states(states) do
@@ -39,6 +43,13 @@ defmodule SymphonyElixir.Tracker do
   def fetch_issues_by_ids(issue_ids) do
     adapter().fetch_issues_by_ids(issue_ids)
   end
+
+  @spec on_issue_started(Issue.t()) :: :ok | {:error, term()}
+  def on_issue_started(%Issue{} = issue), do: call_optional(:on_issue_started, [issue], :ok)
+
+  @spec on_issue_input_required(Issue.t()) :: :ok | {:error, term()}
+  def on_issue_input_required(%Issue{} = issue),
+    do: call_optional(:on_issue_input_required, [issue], :ok)
 
   @doc """
   Captures the selected adapter and effective tracker settings for one
@@ -121,6 +132,17 @@ defmodule SymphonyElixir.Tracker do
 
   defp adapter_secret_environment_names(adapter, tracker_settings) do
     adapter.secret_environment_names(tracker_settings)
+  end
+
+  defp call_optional(function, arguments, default) do
+    selected_adapter = adapter()
+
+    if Code.ensure_loaded?(selected_adapter) and
+         function_exported?(selected_adapter, function, length(arguments)) do
+      apply(selected_adapter, function, arguments)
+    else
+      default
+    end
   end
 
   defp unsupported_agent_tool_response(tool) do

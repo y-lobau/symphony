@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{AgentRunner, Config, History, StatusDashboard, Tracker, Workflow, Workspace}
   alias SymphonyElixir.Tracker.Issue
 
   @continuation_retry_delay_ms 1_000
@@ -33,6 +33,7 @@ defmodule SymphonyElixir.Orchestrator do
       :poll_check_in_progress,
       :tick_timer_ref,
       :tick_token,
+      history_server: History,
       task_supervisor: SymphonyElixir.TaskSupervisor,
       running: %{},
       completed: MapSet.new(),
@@ -65,6 +66,7 @@ defmodule SymphonyElixir.Orchestrator do
           tick_timer_ref: nil,
           tick_token: nil,
           task_supervisor: Keyword.get(opts, :task_supervisor, SymphonyElixir.TaskSupervisor),
+          history_server: Keyword.get(opts, :history_server, History),
           codex_totals: @empty_codex_totals,
           codex_rate_limits: nil
         }
@@ -138,6 +140,15 @@ defmodule SymphonyElixir.Orchestrator do
         state = record_session_completion_totals(state, running_entry)
         session_id = running_entry_session_id(running_entry)
 
+        outcome =
+          cond do
+            input_required_blocker?(running_entry) -> :human_input
+            reason == :normal -> :completed
+            true -> :failed
+          end
+
+        record_history_finish(state, running_entry, outcome)
+
         state = handle_agent_down(reason, state, issue_id, running_entry, session_id)
 
         Logger.info("Agent task finished for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}")
@@ -164,6 +175,11 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  def handle_info({:worker_issue_observed, _issue_id, %Issue{} = issue}, state) do
+    record_history_observation(state, issue)
+    {:noreply, refresh_running_issue_state(state, issue)}
+  end
+
   def handle_info(
         {:codex_worker_update, issue_id, %{event: _, timestamp: _} = update},
         %{running: running} = state
@@ -174,6 +190,7 @@ defmodule SymphonyElixir.Orchestrator do
 
       running_entry ->
         {updated_running_entry, token_delta} = integrate_codex_update(running_entry, update)
+        record_history_update(state, updated_running_entry, update)
 
         state =
           state
@@ -211,6 +228,8 @@ defmodule SymphonyElixir.Orchestrator do
     else
       Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
 
+      record_history_retry(state, running_entry, "Issue remains active")
+
       state
       |> complete_issue(issue_id)
       |> schedule_issue_retry(issue_id, 1, %{
@@ -243,6 +262,7 @@ defmodule SymphonyElixir.Orchestrator do
     Logger.warning("Agent task exited for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}; scheduling retry")
 
     next_attempt = next_retry_attempt_from_running(running_entry)
+    record_history_retry(state, running_entry, "Agent exited before completion")
 
     schedule_issue_retry(state, issue_id, next_attempt, %{
       identifier: running_entry.identifier,
@@ -260,9 +280,14 @@ defmodule SymphonyElixir.Orchestrator do
       |> reconcile_blocked_issues()
 
     with :ok <- Config.validate!(),
-         {:ok, issues} <- Tracker.fetch_issues_by_states(Config.settings!().tracker.active_states),
-         true <- available_slots(state) > 0 do
-      choose_issues(issues, state)
+         {:ok, issues} <- Tracker.fetch_issues_by_states(Config.settings!().tracker.active_states) do
+      Enum.each(issues, &record_history_observation(state, &1))
+
+      if available_slots(state) > 0 do
+        choose_issues(issues, state)
+      else
+        state
+      end
     else
       {:error, :missing_linear_api_token} ->
         Logger.error("Tracker API token missing in WORKFLOW.md")
@@ -300,9 +325,6 @@ defmodule SymphonyElixir.Orchestrator do
 
       {:error, reason} ->
         Logger.error("Failed to fetch from issue tracker: #{inspect(reason)}")
-        state
-
-      false ->
         state
     end
   end
@@ -419,6 +441,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp reconcile_issue_state(%Issue{} = issue, state, active_states, terminal_states) do
+    record_history_observation(state, issue)
+
     cond do
       terminal_issue_state?(issue.state, terminal_states) ->
         Logger.info("Issue moved to terminal state: #{issue_context(issue)} state=#{issue.state}; stopping active agent")
@@ -454,6 +478,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp reconcile_blocked_issue_state(%Issue{} = issue, state, active_states, terminal_states) do
+    record_history_observation(state, issue)
+
     cond do
       terminal_issue_state?(issue.state, terminal_states) ->
         Logger.info("Blocked issue moved to terminal state: #{issue_context(issue)} state=#{issue.state}; releasing block")
@@ -462,6 +488,10 @@ defmodule SymphonyElixir.Orchestrator do
 
       !issue_routable?(issue) ->
         Logger.info("Blocked issue no longer routed to this worker: #{issue_context(issue)} assignee=#{inspect(issue.assignee_id)}; releasing block")
+        release_issue_claim(state, issue.id)
+
+      blocked_issue_requeued?(issue) ->
+        Logger.info("Blocked issue returned to a dispatch status: #{issue_context(issue)} project_status=#{issue.project_status}; releasing block")
         release_issue_claim(state, issue.id)
 
       active_issue_state?(issue.state, active_states) ->
@@ -551,13 +581,14 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp terminate_running_issue(%State{} = state, issue_id, cleanup_workspace) do
+  defp terminate_running_issue(%State{} = state, issue_id, cleanup_workspace, outcome \\ :cancelled) do
     case Map.get(state.running, issue_id) do
       nil ->
         release_issue_claim(state, issue_id)
 
       %{pid: pid, ref: ref, identifier: identifier} = running_entry ->
         state = record_session_completion_totals(state, running_entry)
+        record_history_finish(state, running_entry, outcome)
 
         stop_running_task(pid, ref, state.task_supervisor)
 
@@ -626,7 +657,7 @@ defmodule SymphonyElixir.Orchestrator do
         next_attempt = next_retry_attempt_from_running(running_entry)
 
         state
-        |> terminate_running_issue(issue_id, false)
+        |> terminate_running_issue(issue_id, false, :failed)
         |> schedule_issue_retry(issue_id, next_attempt, %{
           identifier: identifier,
           issue_url: running_entry.issue.url,
@@ -745,6 +776,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp stop_and_block_issue(%State{} = state, issue_id, running_entry, error) do
+    record_history_finish(state, running_entry, :human_input, error)
+
     stop_running_task(
       Map.get(running_entry, :pid),
       Map.get(running_entry, :ref),
@@ -755,6 +788,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp block_issue_from_entry(%State{} = state, issue_id, running_entry, error) do
+    report_issue_input_required(running_entry)
+
     blocked_entry = %{
       issue_id: issue_id,
       identifier: Map.get(running_entry, :identifier, issue_id),
@@ -776,6 +811,33 @@ defmodule SymphonyElixir.Orchestrator do
         claimed: MapSet.put(state.claimed, issue_id),
         blocked: Map.put(state.blocked, issue_id, blocked_entry)
     }
+  end
+
+  defp report_issue_started(%Issue{} = issue) do
+    case Tracker.on_issue_started(issue) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Failed to update issue start metadata for #{issue_context(issue)}: #{inspect(reason)}")
+    end
+  end
+
+  defp report_issue_input_required(running_entry) do
+    case Map.get(running_entry, :issue) do
+      %Issue{} = issue ->
+        case Tracker.on_issue_input_required(issue) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning("Failed to set human-input status for #{issue_context(issue)}: #{inspect(reason)}")
+            :error
+        end
+
+      _ ->
+        :error
+    end
   end
 
   defp choose_issues(issues, state) do
@@ -863,6 +925,7 @@ defmodule SymphonyElixir.Orchestrator do
        when is_binary(id) and is_binary(identifier) and is_binary(title) and is_binary(state_name) do
     Enum.all?([id, identifier, title, state_name], &present_string?/1) and
       issue_routable?(issue) and
+      project_status_dispatchable?(issue) and
       active_issue_state?(state_name, active_states) and
       !terminal_issue_state?(state_name, terminal_states)
   end
@@ -871,6 +934,24 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp issue_routable?(%Issue{} = issue) do
     Issue.routable?(issue, Config.settings!().tracker.required_labels)
+  end
+
+  defp project_status_dispatchable?(%Issue{project_status: status}) do
+    case Config.settings!().tracker.provider["dispatch_statuses"] do
+      statuses when is_list(statuses) and statuses != [] ->
+        is_binary(status) and
+          Enum.any?(statuses, &(normalize_issue_state(&1) == normalize_issue_state(status)))
+
+      _ ->
+        true
+    end
+  end
+
+  defp blocked_issue_requeued?(%Issue{} = issue) do
+    case Config.settings!().tracker.provider["dispatch_statuses"] do
+      statuses when is_list(statuses) and statuses != [] -> project_status_dispatchable?(issue)
+      _ -> false
+    end
   end
 
   defp terminal_issue_state?(state_name, terminal_states) when is_binary(state_name) do
@@ -952,10 +1033,16 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
     case Task.Supervisor.start_child(state.task_supervisor, fn ->
-           AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
+           receive do
+             :start_worker -> AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
+           end
          end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
+
+        report_issue_started(issue)
+
+        history_run_id = start_history_run(state, issue, attempt, worker_host)
 
         Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
 
@@ -965,6 +1052,7 @@ defmodule SymphonyElixir.Orchestrator do
             ref: ref,
             identifier: issue.identifier,
             issue: issue,
+            history_run_id: history_run_id,
             worker_host: worker_host,
             workspace_path: nil,
             session_id: nil,
@@ -983,12 +1071,15 @@ defmodule SymphonyElixir.Orchestrator do
             started_at: DateTime.utc_now()
           })
 
-        %{
+        next_state = %{
           state
           | running: running,
             claimed: MapSet.put(state.claimed, issue.id),
             retry_attempts: Map.delete(state.retry_attempts, issue.id)
         }
+
+        send(pid, :start_worker)
+        next_state
 
       {:error, reason} ->
         Logger.error("Unable to spawn agent for #{issue_context(issue)}: #{inspect(reason)}")
@@ -1628,6 +1719,92 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp record_session_completion_totals(state, _running_entry), do: state
+
+  defp start_history_run(state, issue, attempt, worker_host) do
+    context = %{
+      workflow_revision: workflow_revision(),
+      worker_host: worker_host,
+      attempt: attempt
+    }
+
+    case History.start_run(issue, context, state.history_server) do
+      {:ok, run_id} ->
+        run_id
+
+      {:error, reason} ->
+        Logger.error("Issue history start failed for #{issue_context(issue)}: #{inspect(reason)}")
+        nil
+    end
+  end
+
+  defp workflow_revision do
+    case Workflow.current() do
+      {:ok, workflow} ->
+        :crypto.hash(:sha256, :erlang.term_to_binary(workflow))
+        |> Base.encode16(case: :lower)
+        |> binary_part(0, 12)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp record_history_update(state, %{history_run_id: run_id} = entry, update)
+       when is_binary(run_id) do
+    tokens = history_tokens(entry)
+    log_history_result(History.record_update(run_id, update, tokens, state.history_server))
+
+    if update[:event] == :pull_request_created and is_binary(update[:url]) do
+      log_history_result(History.record_pull_request(run_id, update.url, update.timestamp, state.history_server))
+    end
+
+    :ok
+  end
+
+  defp record_history_update(_state, _entry, _update), do: :ok
+
+  defp record_history_finish(state, entry, outcome, reason \\ nil)
+
+  defp record_history_finish(state, %{history_run_id: run_id} = entry, outcome, reason)
+       when is_binary(run_id) do
+    stop =
+      if outcome == :human_input or is_binary(reason) do
+        %{
+          signal: if(outcome == :human_input, do: "human_input_required", else: Atom.to_string(outcome)),
+          reason: reason || blocker_error(entry, "Human input required")
+        }
+      end
+
+    details = %{ended_at: DateTime.utc_now(), tokens: history_tokens(entry), stop: stop}
+    log_history_result(History.finish_run(run_id, outcome, details, state.history_server))
+  end
+
+  defp record_history_finish(_state, _entry, _outcome, _reason), do: :ok
+
+  defp record_history_retry(state, %{history_run_id: run_id}, reason) when is_binary(run_id) do
+    log_history_result(History.record_retry(run_id, reason, DateTime.utc_now(), state.history_server))
+  end
+
+  defp record_history_retry(_state, _entry, _reason), do: :ok
+
+  defp record_history_observation(state, %Issue{} = issue) do
+    case History.observe_issue(issue, DateTime.utc_now(), state.history_server) do
+      :ok -> :ok
+      {:error, :issue_not_found} -> :ok
+      error -> log_history_result(error)
+    end
+  end
+
+  defp history_tokens(entry) do
+    %{
+      input_tokens: Map.get(entry, :codex_input_tokens, 0),
+      output_tokens: Map.get(entry, :codex_output_tokens, 0),
+      total_tokens: Map.get(entry, :codex_total_tokens, 0)
+    }
+  end
+
+  defp log_history_result(:ok), do: :ok
+  defp log_history_result({:error, reason}), do: Logger.warning("Issue history recording failed: #{inspect(reason)}")
 
   defp refresh_runtime_config(%State{} = state) do
     config = Config.settings!()

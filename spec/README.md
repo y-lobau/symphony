@@ -20,6 +20,21 @@ The app's private key and installation configuration stay outside Git and
 are readable only by the local user running Symphony. Short-lived tokens are
 cached locally with owner-only permissions and refreshed before expiry.
 
-The existing `ready-for-agent` and `symphony-pilot` labels remain the dispatch
-gate. The pilot still leaves pull requests open for human review and does not
-merge them.
+An open issue is eligible for dispatch when it has the `ready-for-agent` label
+and its **Plyn Release** Project Status is **Ready** or **Backlog**. The label
+remains on the issue as a standing opt-in. Project Status controls when another
+run may start. Pull requests remain open for human review and are not merged
+by the worker.
+
+For issues in the **Plyn Release** GitHub Project, Symphony assigns the issue to
+`y-lobau` and sets its Project Status to **In progress** when a run starts. If
+Codex requests human input, Symphony ends that run, sets the Project Status to
+**Human in the Loop**, and blocks the issue. After the human replies in an
+issue comment and moves the Project Status to **Ready** or **Backlog**,
+Symphony starts a fresh run and sets the Project Status to **In progress**.
+The agent is instructed to read the issue's latest comments before continuing.
+When the agent opens a pull request, it moves the issue to **In review**.
+
+Project updates use the GitHub App's organization Projects permission. A failed
+Project Status read prevents dispatch until the status can be confirmed.
+Failures to update the Project or assignee are logged.

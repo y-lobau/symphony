@@ -19,9 +19,21 @@ mix escript.build
 ```
 
 `WORKFLOW.plyn.md` polls open issues in `kolas-code/plyn`. An issue is eligible
-only when it has both `ready-for-agent` and `symphony-pilot` labels. The latter
-is an explicit pilot gate. The workflow
-runs one issue at a time, opens a PR, and leaves review and merge to humans.
+when it has the `ready-for-agent` label and its **Plyn Release** Project Status
+is **Ready** or **Backlog**. The label remains on the issue. The workflow
+currently runs up to three issues at a time, opens PRs, and leaves review and
+merge to humans. Its concurrency is controlled by
+`agent.max_concurrent_agents`; increasing that value allows independent issues
+to run in parallel.
+
+For issues in the **Plyn Release** GitHub Project, Symphony assigns the issue
+to `y-lobau` and sets its Project Status to **In progress** when a run starts.
+If Codex requests human input, the run blocks and the status becomes **Human in
+the Loop**. The human can reply in an issue comment and move the Project Status
+to **Ready** or **Backlog**; Symphony then starts a fresh run and moves the
+status to **In progress**. After a pull request is opened, the agent moves the
+issue to **In review**. The GitHub App needs organization Projects read/write
+permission for these Project Status updates.
 
 Start in the foreground:
 
@@ -36,8 +48,8 @@ whose private key and installation configuration are kept outside Git under
 `kolas-code/plyn` and has repository Contents, Issues, and Pull requests write
 permissions. Git pushes use the app over HTTPS, and issue-workspace commits
 use the app bot's name and email. Authentication failures do not fall back to
-the Mac owner's GitHub account. Do not apply `symphony-pilot` to an issue until
-its scope and acceptance criteria have been reviewed for this pilot.
+the Mac owner's GitHub account. Apply `ready-for-agent` only after an issue's
+scope and acceptance criteria have been reviewed.
 Codex turns use `danger-full-access` because Codex protects `.git` metadata
 from writes in `workspace-write` mode, which prevents unattended commits.
 The workflow prompt instructs the agent to work in its isolated checkout; the GitHub
@@ -64,7 +76,14 @@ launchctl kickstart -k gui/$(id -u)/ai.openclaw.symphony.plyn
 curl -fsS http://127.0.0.1:4097/api/v1/state
 ```
 
-The dashboard is at `http://127.0.0.1:4097`. To stop the service, run
+The dashboard is at `http://127.0.0.1:4097` on this Mac. From another machine
+on the local network, use `http://192.168.0.146:4097` (replace the address if
+this Mac's LAN IP changes). The workflow binds the dashboard to all local
+network interfaces. Issue history is at `/history` on the same host and port;
+it begins with runs started after this feature is deployed and is retained in
+`var/logs/history/history.dets`. The issue list pages older work, and each
+issue page includes totals, PR links, run context, and an observed event timeline.
+To stop the service, run
 `launchctl bootout gui/$(id -u)/ai.openclaw.symphony.plyn`; to load it again,
 run `launchctl bootstrap gui/$(id -u)
 ~/Library/LaunchAgents/ai.openclaw.symphony.plyn.plist`. If either installed

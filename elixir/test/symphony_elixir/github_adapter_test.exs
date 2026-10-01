@@ -4,6 +4,8 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
   alias SymphonyElixir.GitHub.Adapter, as: GitHubAdapter
   alias SymphonyElixir.GitHub.AgentTool, as: GitHubAgentTool
   alias SymphonyElixir.GitHub.Client, as: GitHubClient
+  alias SymphonyElixir.GitHub.ProjectV2
+  alias SymphonyElixir.Tracker.Issue
 
   defmodule FakeGitHubClient do
     def fetch_issues_by_states(states) do
@@ -17,14 +19,55 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
     end
   end
 
+  defmodule FakeProjectIssueClient do
+    def fetch_issues_by_states(_states), do: {:ok, [issue()]}
+    def fetch_issues_by_ids(_ids), do: {:ok, [issue()]}
+
+    defp issue do
+      %SymphonyElixir.Tracker.Issue{
+        id: "42",
+        identifier: "GH-42",
+        title: "A project issue",
+        state: "open",
+        labels: ["ready-for-agent"],
+        dispatchable: true
+      }
+    end
+  end
+
+  defmodule FakeProjectStatus do
+    def status(_issue, _settings), do: {:ok, "Ready"}
+
+    def assign_issue(issue, assignee, _settings) do
+      send(self(), {:assigned_issue, issue.id, assignee})
+      :ok
+    end
+
+    def update_status(issue, status, _settings) do
+      send(self(), {:updated_project_status, issue.id, status})
+      :ok
+    end
+  end
+
+  defmodule FailingProjectStatus do
+    def status(_issue, _settings), do: {:error, :github_project_unavailable}
+  end
+
   setup do
     github_client_module = Application.get_env(:symphony_elixir, :github_client_module)
+    github_project_module = Application.get_env(:symphony_elixir, :github_project_module)
 
     on_exit(fn ->
       if is_nil(github_client_module) do
         Application.delete_env(:symphony_elixir, :github_client_module)
       else
         Application.put_env(:symphony_elixir, :github_client_module, github_client_module)
+      end
+
+      if is_nil(github_project_module) do
+        Application.delete_env(:symphony_elixir, :github_project_module)
+      else
+        Application.put_env(:symphony_elixir, :github_project_module, github_project_module)
       end
     end)
 
@@ -184,6 +227,107 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
              Map.put(raw_issue(44), "title", " "),
              "octo/repo"
            ) == nil
+  end
+
+  test "project status lookup reads the configured project's Status field" do
+    issue = GitHubClient.normalize_issue_for_test(raw_issue(42), "octo/repo")
+    settings = tracker_settings(%{"project" => "Plyn Release"})
+
+    request_fun = fn "POST", "/graphql", %{}, %{"query" => query, "variables" => variables}, _github_settings ->
+      assert query =~ "fieldValueByName(name: \"Status\")"
+      assert variables == %{owner: "octo", repo: "repo", number: 42}
+
+      {:ok,
+       %{
+         status: 200,
+         body: %{
+           "data" => %{
+             "organization" => %{
+               "projectsV2" => %{
+                 "nodes" => [
+                   %{
+                     "id" => "project-1",
+                     "title" => "Plyn Release",
+                     "fields" => %{"nodes" => [%{"id" => "field-1", "name" => "Status", "options" => []}]}
+                   }
+                 ]
+               }
+             },
+             "repository" => %{
+               "issue" => %{
+                 "projectItems" => %{
+                   "nodes" => [
+                     %{
+                       "id" => "item-42",
+                       "project" => %{"id" => "project-1", "title" => "Plyn Release"},
+                       "fieldValueByName" => %{"name" => "Human in the Loop"}
+                     }
+                   ]
+                 }
+               }
+             }
+           }
+         }
+       }}
+    end
+
+    assert {:ok, "Human in the Loop"} =
+             ProjectV2.status(issue, settings, request_fun: request_fun)
+  end
+
+  test "adapter attaches Project Status and fails closed when the lookup fails" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_provider: %{
+        "repo" => "octo/repo",
+        "token" => "test-token",
+        "project" => "Plyn Release",
+        "dispatch_statuses" => ["Ready", "Backlog"]
+      },
+      tracker_required_labels: ["ready-for-agent"],
+      tracker_active_states: ["open"],
+      tracker_terminal_states: ["closed"]
+    )
+
+    Application.put_env(:symphony_elixir, :github_client_module, FakeProjectIssueClient)
+    Application.put_env(:symphony_elixir, :github_project_module, FakeProjectStatus)
+
+    assert Config.settings!().tracker.provider["project"] == "Plyn Release"
+    assert Config.settings!().tracker.provider["dispatch_statuses"] == ["Ready", "Backlog"]
+    assert Config.settings!().tracker.required_labels == ["ready-for-agent"]
+
+    assert {:ok, [%Issue{project_status: "Ready"}]} = GitHubAdapter.fetch_issues_by_states(["open"])
+    assert {:ok, [%Issue{project_status: "Ready"}]} = GitHubAdapter.fetch_issues_by_ids(["42"])
+
+    Application.put_env(:symphony_elixir, :github_project_module, FailingProjectStatus)
+    assert {:error, :github_project_unavailable} = GitHubAdapter.fetch_issues_by_states(["open"])
+  end
+
+  test "agent start and input handoff update Project Status without changing the label" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "github",
+      tracker_provider: %{
+        "repo" => "octo/repo",
+        "token" => "test-token",
+        "project" => "Plyn Release",
+        "agent_assignee" => "y-lobau",
+        "dispatch_statuses" => ["Ready", "Backlog"]
+      },
+      tracker_required_labels: ["ready-for-agent"],
+      tracker_active_states: ["open"],
+      tracker_terminal_states: ["closed"]
+    )
+
+    Application.put_env(:symphony_elixir, :github_project_module, FakeProjectStatus)
+    issue = %Issue{id: "42", labels: ["ready-for-agent"]}
+
+    assert :ok = GitHubAdapter.on_issue_started(issue)
+    assert_receive {:assigned_issue, "42", "y-lobau"}
+    assert_receive {:updated_project_status, "42", "In progress"}
+
+    assert :ok = GitHubAdapter.on_issue_input_required(issue)
+    assert_receive {:updated_project_status, "42", "Human in the Loop"}
+    assert issue.labels == ["ready-for-agent"]
   end
 
   test "client pages state reads, filters requested states, and drops malformed records" do

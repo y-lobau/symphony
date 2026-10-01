@@ -3,7 +3,55 @@ defmodule SymphonyElixirWeb.Presenter do
   Shared projections for the observability API and dashboard.
   """
 
-  alias SymphonyElixir.{Config, Orchestrator, StatusDashboard, Workspace}
+  alias SymphonyElixir.{Config, History, Orchestrator, StatusDashboard, Workspace}
+
+  @spec history_list_payload(GenServer.server(), GenServer.server(), timeout(), pos_integer(), non_neg_integer()) :: map() | {:error, term()}
+  def history_list_payload(history, orchestrator, timeout, limit, offset) do
+    case History.list_issues(limit, offset, history) do
+      %{issues: issues} = page ->
+        statuses = runtime_statuses(orchestrator, timeout)
+        %{page | issues: Enum.map(issues, &with_runtime_status(&1, statuses))}
+
+      error ->
+        error
+    end
+  end
+
+  @spec history_issue_payload(String.t(), GenServer.server(), GenServer.server(), timeout()) :: {:ok, map()} | {:error, term()}
+  def history_issue_payload(identifier, history, orchestrator, timeout) do
+    case History.get_issue(identifier, history) do
+      {:ok, %{summary: summary} = detail} ->
+        statuses = runtime_statuses(orchestrator, timeout)
+        {:ok, %{detail | summary: with_runtime_status(summary, statuses)}}
+
+      error ->
+        error
+    end
+  end
+
+  defp runtime_statuses(orchestrator, timeout) do
+    case Orchestrator.snapshot(orchestrator, timeout) do
+      %{} = snapshot ->
+        []
+        |> add_runtime_statuses(Map.get(snapshot, :running, []), "running")
+        |> add_runtime_statuses(Map.get(snapshot, :retrying, []), "retrying")
+        |> add_runtime_statuses(Map.get(snapshot, :blocked, []), "blocked")
+        |> Map.new()
+
+      _ ->
+        %{}
+    end
+  end
+
+  defp add_runtime_statuses(acc, entries, status) do
+    Enum.reduce(entries, acc, fn entry, result ->
+      [{Map.get(entry, :issue_id), status} | result]
+    end)
+  end
+
+  defp with_runtime_status(issue, statuses) do
+    Map.put(issue, :runtime_status, Map.get(statuses, issue.id))
+  end
 
   @spec state_payload(GenServer.name(), timeout()) :: map()
   def state_payload(orchestrator, snapshot_timeout_ms) do

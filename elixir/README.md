@@ -109,7 +109,7 @@ If no path is passed, Symphony defaults to `./WORKFLOW.md`.
 
 Optional flags:
 
-- `--logs-root` tells Symphony to write logs under a different directory (default: `./log`)
+- `--logs-root` tells Symphony to write logs and the persistent history store under a different directory (default log directory: `./log`)
 - `--port` also starts the Phoenix observability service (default: disabled)
 
 The `WORKFLOW.md` file uses YAML front matter for configuration, plus a Markdown body used as the
@@ -255,6 +255,14 @@ codex:
   `body`; Symphony executes it host-side with the session-bound token, removes configured tracker
   credentials and provider authentication aliases from the Codex child, and leaves raw tool access
   limited by that token's GitHub permissions.
+- Optional Project lifecycle: set `tracker.provider.project` to an organization Projects v2 title,
+  `agent_assignee` to an assignable GitHub login, and `dispatch_statuses` to the Project Status
+  options that may start new runs. The required label remains a standing opt-in. Symphony assigns
+  the issue and sets Project Status to `In progress` at dispatch. An input-required event sets the
+  status to `Human in the Loop` and blocks the run; a human comment plus moving the Project Status
+  to an allowed dispatch status starts a fresh run. A Project Status lookup failure prevents dispatch.
+  This requires organization Projects read/write and repository Issues write permissions on the
+  installed GitHub App.
 
 ### Jira Cloud adapter
 
@@ -291,11 +299,18 @@ codex:
 
 The observability UI now runs on a minimal Phoenix stack:
 
-- LiveView for the dashboard at `/`
-- JSON API for operational debugging under `/api/v1/*`
+- LiveView for the dashboard at `/`, issue history at `/history`, and issue timelines at `/history/<issue_identifier>`
+- JSON API for operational debugging under `/api/v1/*`, including paginated `/api/v1/history?limit=20&offset=0` and `/api/v1/history/<issue_identifier>`
 - Bandit as the HTTP server
 - Phoenix dependency static assets for the LiveView client bootstrap
 - Tracker issue identifiers link to the tracker-provided URL when it uses `http` or `https`
+
+History starts recording when this version first runs; it does not reconstruct older sessions.
+Issue pages show active and past runs, token use, active runtime, completed Codex messages,
+human handoffs, outcomes, model and reasoning effort, PR links, and observed events. They do
+not retain message bodies, reasoning, or tool payloads. Records are retained until the history
+file is removed. The store is `history/history.dets` under `--logs-root`, or `var/history/history.dets`
+beside the workflow file when that flag is absent. Keep this file across service upgrades.
 
 ## Project Layout
 

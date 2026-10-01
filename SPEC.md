@@ -1139,6 +1139,18 @@ User-input-required policy:
   through an approved operator channel, or auto-resolve it according to its documented policy.
 - The example high-trust behavior above fails user-input-required turns immediately.
 
+Plyn GitHub profile behavior:
+
+- A targeted-protocol input-required event ends the current run and blocks the issue.
+- The configured dispatch label is a standing opt-in. New runs are eligible only from configured
+  GitHub Projects v2 statuses (`Ready` and `Backlog` for Plyn). A failed status lookup does not
+  dispatch the issue.
+- Symphony sets Project Status to `Human in the Loop` when an issue becomes blocked for input and
+  leaves the label in place.
+- The human replies in an issue comment and moves Project Status to `Ready` or `Backlog`. The issue
+  is then eligible for a fresh run, which sets Project Status to `In progress` and reads recent
+  issue comments. A pull request handoff moves the issue to `In review`.
+
 ### 10.6 Timeouts and Error Mapping
 
 Timeouts:
@@ -1630,6 +1642,45 @@ API design notes:
 - API errors SHOULD use a JSON envelope such as `{"error":{"code":"...","message":"..."}}`.
 - If the dashboard is a client-side app, it SHOULD consume this API rather than duplicating state
   logic.
+
+### 13.8 Persistent Issue History (OPTIONAL Extension)
+
+An implementation that offers issue history MUST keep it separate from the scheduler's in-memory
+state. History begins when the extension is enabled; previously completed work is not reconstructed
+from logs. Records survive service restarts and are retained without an automatic expiry.
+
+- The top-level history unit is a tracker issue. An issue contains ordered worker runs, and each run
+  contains ordered coding-agent turns and timestamped events. A new worker run after a retry or a
+  human reply belongs to the same issue.
+- An issue summary shows its latest observed tracker status and observation time, pull request links,
+  aggregate input/output/total tokens, active worker runtime, completed agent-message count, human
+  input handoff count, and latest run outcome. Live scheduler status takes precedence while an issue
+  is running, retrying, or blocked. A tracker refresh updates older issue statuses without creating
+  another run; a failed refresh leaves the last observation visibly dated.
+- Each run records its start/end, outcome (`completed`, `human_input`, `failed`, `cancelled`, or
+  `interrupted`), token counts, active runtime, agent-message count, and the workflow revision,
+  coding-agent model, and reasoning effort actually used. Unknown model or effort is displayed as
+  unknown rather than inferred. An open run's runtime increases while it executes. A run still open
+  when the service restarts is marked interrupted.
+- Count one agent message only when the coding-agent protocol reports a completed agent-authored
+  message. Streaming deltas, reasoning, tool calls, and protocol notifications do not add to this
+  count. Count each human-input stop once; keep its timestamp, signal, and available short reason as
+  a structured stop record without assigning a fixed reason category.
+- The timeline is chronological and shows observed run/turn boundaries, completed agent messages,
+  retries, errors, human-input stops, tracker status changes, and pull request creation. Events use
+  short descriptions and a safe cause for a failed run when one is known, including failures before
+  the first coding-agent turn. Full prompts, reasoning, message bodies, tool arguments, and tool
+  outputs are not persisted. Individual tool calls are not timeline entries in this version. No
+  timeline filters or inferred planning/coding phases are required.
+- Valid pull request links observed from successful agent operations are attached to the issue and
+  shown on the creation event. A pull request link must use the issue tracker host. Repeated
+  observations of the same pull request do not duplicate it.
+- The dashboard presents issue summaries and an issue detail view with totals above a vertical
+  run/event timeline. The issue list can reach older pages. History uses the same HTTP listener and
+  network access as the live dashboard. The API provides a paginated issue list and an issue detail
+  response; it does not return full message content.
+- A storage failure MUST be operator-visible and MUST NOT silently claim that a run was recorded.
+  History failures MUST NOT alter dispatch, cancellation, or retry decisions.
 
 ## 14. Failure Model and Recovery Strategy
 

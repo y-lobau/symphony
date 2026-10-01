@@ -66,6 +66,10 @@ defmodule SymphonyElixirWeb.DashboardLive do
             </span>
           </div>
         </div>
+        <nav class="history-nav" aria-label="Dashboard navigation">
+          <a href="/" aria-current="page">Live dashboard</a>
+          <a href="/history">Issue history</a>
+        </nav>
       </header>
 
       <%= if @payload[:error] do %>

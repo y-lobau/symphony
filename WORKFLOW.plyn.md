@@ -4,15 +4,22 @@ tracker:
   provider:
     repo: kolas-code/plyn
     token_command: /Volumes/ext/git/plyn-symphony/scripts/github_app_auth.py
+    project: Plyn Release
+    agent_assignee: y-lobau
+    dispatch_statuses:
+      - Ready
+      - Backlog
   required_labels:
     - ready-for-agent
-    - symphony-pilot
   active_states:
     - open
   terminal_states:
     - closed
 polling:
   interval_ms: 30000
+server:
+  host: 0.0.0.0
+  port: 4097
 workspace:
   root: /Volumes/ext/git/plyn-symphony/var/workspaces
 hooks:
@@ -23,10 +30,10 @@ hooks:
     fi
   before_run: /usr/bin/python3 /Volumes/ext/git/plyn-symphony/scripts/github_app_git.py configure
 agent:
-  max_concurrent_agents: 1
+  max_concurrent_agents: 3
   max_turns: 8
 codex:
-  command: /Applications/ChatGPT.app/Contents/Resources/codex app-server
+  command: /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex app-server
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:
@@ -42,8 +49,16 @@ Labels: {{ issue.labels }}
 Description:
 {{ issue.description }}
 
-Use only the isolated repository checkout supplied as your working directory. Read its `AGENTS.md`, `../plyn-wiki/hot.md`, and `../plyn-wiki/index.md` before changing Plyn code. The wiki is provided as a separate sibling checkout for read-only context.
+Use only the isolated repository checkout supplied as your working directory. Read its `AGENTS.md`, `../plyn-wiki/hot.md`, and `../plyn-wiki/index.md` before changing Plyn code. The wiki is provided as a separate sibling checkout for read-only context. Before starting work, read the latest issue comments with `github_api` (`GET /repos/kolas-code/plyn/issues/{{ issue.id }}/comments?per_page=100`); they may contain the human's response to an earlier input request.
 
 Follow the issue's acceptance criteria and the repository's spec, test case, test, and `make test` rules. Keep the change focused on the issue. Do not handle billing, signing, provisioning, App Store upload, production credentials, or other high-risk work without human approval.
 
-When the work is ready, push a branch through the configured HTTPS origin and open a pull request linked to the issue. Use Symphony's `github_api` tool for GitHub API actions such as creating the PR, commenting on the issue, and removing its label; do not depend on `gh` CLI authentication in this unattended session. Include what changed, checks run, manual acceptance steps, and any limitations. Leave the pull request open for human review; do not approve or merge it. Record the PR link in the issue and remove `symphony-pilot` from the issue as the final tracker action so the open issue is not dispatched again. If blocked, explain the blocker on the issue and remove `symphony-pilot` as the final tracker action.
+### Simulator permission preflight
+
+For iOS acceptance work that needs a simulator permission such as keyboard Full Access, first verify the installed app and extension identity, build/configuration, Firebase project, simulator UDID, and current permission state using available read-only checks. Do not ask the human to approve a permission until this preflight is complete; if the Firebase project or build cannot be identified, report that exact blocker and continue independent acceptance work.
+
+Before asking, read the latest issue comments for an explicit human decision from an earlier round. An existing approval applies only to the same simulator UDID, app/extension identity and build configuration, verified Firebase project, and permission scope. If those match and the requested permission is already enabled, continue without asking again. If an exact prior approval is documented and the permission needs to be enabled again for that same setup, treat it as authorization for this QA acceptance flow. Ask again only when there is no applicable approval, the setup or scope changed, or the prior decision was a denial or remains unanswered. Keep approval for simulator QA separate from production credentials, releases, or other permissions.
+
+If human input is required, ask one focused question describing the verified target and exact permission. Post the question on the issue, preserve the pending acceptance step, and let the Human in the Loop workflow resume the issue after the human replies and returns it to an eligible status. Continue all unrelated validation while waiting.
+
+When the work is ready, push a branch through the configured HTTPS origin and open a pull request linked to the issue. Use Symphony's `github_api` tool for GitHub API actions such as creating the PR, commenting on the issue, and updating Project Status via `POST /graphql`; do not depend on `gh` CLI authentication in this unattended session. Include what changed, checks run, manual acceptance steps, and any limitations. Leave the pull request open for human review; do not approve or merge it. Record the PR link in the issue and set its Plyn Release Project Status to `In review` as the final tracker action. Keep `ready-for-agent` on the issue. If you need a human answer, first post the exact question as an issue comment. When Symphony detects the app-server input-required event, it will set Project Status to `Human in the Loop` and end this run. The human should reply in a comment and move Project Status to `Ready` or `Backlog` to trigger a fresh run. Keep `ready-for-agent` on the issue.

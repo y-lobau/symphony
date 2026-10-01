@@ -89,12 +89,22 @@ defmodule SymphonyElixir.AgentRunner do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issues_by_ids/1)
 
-    with {:ok, session} <- AppServer.start_session(workspace, worker_host: worker_host) do
-      try do
-        do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
-      after
-        AppServer.stop_session(session)
-      end
+    case AppServer.start_session(workspace, worker_host: worker_host) do
+      {:ok, session} ->
+        try do
+          do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
+        after
+          AppServer.stop_session(session)
+        end
+
+      {:error, reason} ->
+        send_codex_update(codex_update_recipient, issue, %{
+          event: :startup_failed,
+          timestamp: DateTime.utc_now(),
+          reason: reason
+        })
+
+        {:error, reason}
     end
   end
 
@@ -110,7 +120,10 @@ defmodule SymphonyElixir.AgentRunner do
            ) do
       Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
-      case continue_with_issue?(issue, issue_state_fetcher) do
+      continuation = continue_with_issue?(issue, issue_state_fetcher)
+      report_observed_issue(codex_update_recipient, continuation)
+
+      case continuation do
         {:continue, refreshed_issue} when turn_number < max_turns ->
           Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
 
@@ -138,6 +151,13 @@ defmodule SymphonyElixir.AgentRunner do
       end
     end
   end
+
+  defp report_observed_issue(recipient, {_decision, %Issue{} = issue}) when is_pid(recipient) do
+    send(recipient, {:worker_issue_observed, issue.id, issue})
+    :ok
+  end
+
+  defp report_observed_issue(_recipient, _result), do: :ok
 
   defp build_turn_prompt(issue, opts, 1, _max_turns), do: PromptBuilder.build_prompt(issue, opts)
 

@@ -8,9 +8,22 @@
 	<string>ai.openclaw.symphony.plyn</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/zsh</string>
-		<string>/Users/yanlobau/Library/Application Support/plyn-symphony/run.sh</string>
+		<string>/opt/homebrew/opt/erlang@28/bin/escript</string>
+		<string>/Volumes/ext/git/plyn-symphony/elixir/bin/symphony</string>
+		<string>--i-understand-that-this-will-be-running-without-the-usual-guardrails</string>
+		<string>--logs-root</string>
+		<string>/Volumes/ext/git/plyn-symphony/var/logs</string>
+		<string>--port</string>
+		<string>4097</string>
+		<string>/Volumes/ext/git/plyn-symphony/WORKFLOW.plyn.md</string>
 	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>GH_CONFIG_DIR</key>
+		<string>/Users/yanlobau/Library/Application Support/plyn-symphony/gh-config</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/opt/erlang@28/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>

@@ -6,11 +6,32 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
   use Phoenix.Controller, formats: [:json]
 
   alias Plug.Conn
+  alias SymphonyElixir.History
   alias SymphonyElixirWeb.{Endpoint, Presenter}
 
   @spec state(Conn.t(), map()) :: Conn.t()
   def state(conn, _params) do
     json(conn, Presenter.state_payload(orchestrator(), snapshot_timeout_ms()))
+  end
+
+  @spec history(Conn.t(), map()) :: Conn.t()
+  def history(conn, params) do
+    limit = parse_integer(params["limit"], 20)
+    offset = parse_integer(params["offset"], 0)
+
+    case Presenter.history_list_payload(history_server(), orchestrator(), snapshot_timeout_ms(), limit, offset) do
+      %{issues: _} = payload -> json(conn, payload)
+      {:error, _} -> error_response(conn, 503, "history_unavailable", "History unavailable")
+    end
+  end
+
+  @spec history_issue(Conn.t(), map()) :: Conn.t()
+  def history_issue(conn, %{"issue_identifier" => identifier}) do
+    case Presenter.history_issue_payload(identifier, history_server(), orchestrator(), snapshot_timeout_ms()) do
+      {:ok, detail} -> json(conn, detail)
+      {:error, :issue_not_found} -> error_response(conn, 404, "issue_not_found", "Issue not found")
+      {:error, _} -> error_response(conn, 503, "history_unavailable", "History unavailable")
+    end
   end
 
   @spec issue(Conn.t(), map()) :: Conn.t()
@@ -60,4 +81,15 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
   defp snapshot_timeout_ms do
     Endpoint.config(:snapshot_timeout_ms) || 15_000
   end
+
+  defp history_server, do: Endpoint.config(:history) || History
+
+  defp parse_integer(value, fallback) when is_binary(value) do
+    case Integer.parse(value) do
+      {number, ""} when number >= 0 -> number
+      _ -> fallback
+    end
+  end
+
+  defp parse_integer(_value, fallback), do: fallback
 end
